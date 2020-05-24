@@ -1,12 +1,13 @@
+import neptune
+import gin, gin.torch
+import gin.torch.external_configurables
+from absl import flags, app
+
 import os
 import random
 import numpy as np
 import torch
 from torchsummary import summary
-
-import neptune
-import gin, gin.torch
-from absl import flags, app
 
 import data, models, trainers
 
@@ -14,25 +15,21 @@ import data, models, trainers
 @gin.configurable
 class ExperimentRunner():
 
-    def __init__(self, seed=0, no_cuda=False, num_workers=2, epochs=10, batch_size=64,
-                 log_interval=100, outdir=None, prefix='', target_type='supervised',
-                 datadir='~/datasets', dataset_name='cifar100', model_class=gin.REQUIRED):
+    def __init__(self, seed=0, no_cuda=False, num_workers=2, outdir=None, prefix='',
+                 datadir='~/datasets', model_class=models.resnet50):
 
         self.seed = seed
         self.no_cuda = no_cuda
         self.num_workers = num_workers
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.log_interval = log_interval
         self.outdir = outdir
         self.prefix = prefix
         self.datadir = datadir
-        self.target_type = target_type
-        self.dataset_name = dataset_name
         self.model_class = model_class
 
         self.setup_environment()
         self.setup_torch()
+        self.setup_data_loaders()
+        self.setup_trainer()
 
 
     def setup_environment(self):
@@ -66,78 +63,30 @@ class ExperimentRunner():
         print('Device: ', self.device)
 
 
-    def setup_trainers(self):
-        self.model = self.model_class(in_channels=self.data.input_shape[0],
-                                      n_classes=self.data.num_classes)
-
-        self.model.to(self.device)
-        summary(self.model, self.data.input_shape)
-
-        self.trainer = trainers.SupervisedTrainer(self.model,
-                                                  self.device,
-                                                  train_loader=self.train_loader)
-
-
     def setup_data_loaders(self):
         self.data = data.Data(self.datadir,
-                              self.dataset_name,
-                              self.batch_size,
-                              self.target_type,
                               self.dataloader_kwargs)
 
         self.train_loader = self.data.train_loader
         self.test_loader = self.data.test_loader
 
 
-    def train(self):
-        self.setup_data_loaders()
-        self.setup_trainers()
+    def setup_trainer(self):
+        self.model = self.model_class(in_channels=self.data.input_shape[0],
+                                      n_classes=self.data.num_classes)
 
-        self.global_iters = 0
-        for self.current_epoch in range(1, self.epochs + 1):
-            for batch_idx, (x, y) in enumerate(self.train_loader, start=0):
-                self.global_iters += 1
-                batch_results = self.trainer.train_on_batch(x, y)
-                if self.global_iters % self.log_interval == 0:
-                    template = "Train\tglobal iter: {}, epoch: {}, batch: {}/{}, metrics:  "
-                    template += ": {:.3f}  ".join(list(batch_results.keys()) + [''])
-                    print(template.format(self.global_iters,
-                                          self.current_epoch,
-                                          batch_idx + 1,
-                                          len(self.train_loader),
-                                          *[item.data for item in batch_results.values()]))
-                    for metric, result in batch_results.items():
-                        neptune.send_metric('batch_' + metric, x=self.global_iters, y=result)
+        self.model.to(self.device)
+        summary(self.model, self.data.input_shape)
 
-                if self.global_iters % (10 * self.log_interval) == 0:
-                    self.test()
-        self.test()
+        self.trainer = trainers.SupervisedTrainer(model=self.model,
+                                                  device=self.device,
+                                                  batch_size=self.data.batch_size,
+                                                  train_loader=self.train_loader,
+                                                  test_loader=self.test_loader)
 
 
-    def test(self):
-        test_results = None
-
-        with torch.no_grad():
-            for test_batch_idx, (x_test, y_test) in enumerate(self.test_loader, start=0):
-                test_batch_results = self.trainer.test_on_batch(x_test, y_test)
-
-                if test_results is None:
-                    test_results = test_batch_results.copy()
-                else:
-                    for metric, result in test_batch_results.items():
-                        test_results[metric] += result.data
-
-        total = len(self.test_loader)
-        mean_test_results = {key: value/total for key, value in test_results.items()}
-
-        template = "Test\tEpoch: {} ({:.2f}%), Metrics:  "
-        template += ": {:.3f}  ".join(list(mean_test_results.keys()) + [''])
-        print(template.format(self.current_epoch,
-                              float(self.current_epoch) / (self.epochs) * 100.,
-                              *[item.data for item in mean_test_results.values()]))
-
-        for metric, result in mean_test_results.items():
-            neptune.send_metric('test_' + metric, x=self.global_iters, y=result)
+    def run_exp(self):
+        self.trainer.train()
 
 
 def main(argv):
@@ -157,7 +106,8 @@ def main(argv):
     neptune.log_artifact(*FLAGS.gin_file, 'gin_config_{}.gin'.format(exp_id))
 
     exp_runner = ExperimentRunner(prefix=exp_id)
-    exp_runner.train()
+
+    exp_runner.run_exp()
     neptune.stop()
     print('fin')
 
