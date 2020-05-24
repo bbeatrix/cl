@@ -1,18 +1,28 @@
+import gin, gin.torch
 import torch
 from torchvision import datasets, transforms as tfs
 import numpy as np
 
+
+@gin.configurable
 class Data():
-    def __init__(self, datadir, dataset_name, batch_size, target_type, dataloader_kwargs):
+    def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar100', batch_size=64,
+                 target_type='supervised', augment=False):
         self.datadir = datadir
+        self.dataloader_kwargs = dataloader_kwargs
         self.dataset_name = dataset_name
         self.batch_size = batch_size
-        self.dataloader_kwargs = dataloader_kwargs
-        self.target_type = target_type
+
+        if augment:
+            print('Applying augmentation on train dataset.')
+            self.augment_transforms = [tfs.RandomCrop(32, padding=4),
+                                       tfs.RandomHorizontalFlip()]
+        else:
+            self.augment_transforms = []
 
         self._get_dataset()
 
-        if self.target_type == 'selfsupervised':
+        if target_type == 'selfsupervised':
             print('Self-supervised task: predicting rotation of 0, 90, 180 or 270 degrees.')
             self.train_dataset = SelfsupDataset(self.train_dataset)
             self.test_dataset = SelfsupDataset(self.test_dataset)
@@ -52,18 +62,21 @@ class Data():
         elif self.dataset_name == 'cifar100':
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
-            image_transforms = tfs.Compose([tfs.ToTensor(),
-                                            tfs.Normalize(mean=[0.507, 0.487, 0.441],
-                                                          std=[0.267, 0.256, 0.276])])
+            image_transforms = [tfs.ToTensor(),
+                                tfs.Normalize(mean=[0.507, 0.487, 0.441],
+                                              std=[0.267, 0.256, 0.276])]
+
+            train_transforms = tfs.Compose(self.augment_transforms + image_transforms)
+            test_transforms = tfs.Compose(image_transforms)
 
             self.train_dataset = datasets.CIFAR100(self.datadir,
                                                    train=True,
                                                    download=True,
-                                                   transform=image_transforms)
+                                                   transform=train_transforms)
             self.test_dataset = datasets.CIFAR100(self.datadir,
                                                   train=False,
                                                   download=True,
-                                                  transform=image_transforms)
+                                                  transform=test_transforms)
 
         elif self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
