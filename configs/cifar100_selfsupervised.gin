@@ -1,2 +1,9 @@
-ExperimentRunner.target_type = 'selfsupervised'
 ExperimentRunner.model_class = @models.resnet18
+
+Data.batch_size = 128
+Data.augment = True
+Data.target_type = 'selfsupervised'
+
+SupervisedTrainer.epochs = 20
+SupervisedTrainer.lr = 0.001
+SupervisedTrainer.optimizer = @torch.optim.Adam
