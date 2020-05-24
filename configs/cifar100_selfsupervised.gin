@@ -1,0 +1,2 @@
+ExperimentRunner.target_type = 'selfsupervised'
+ExperimentRunner.model_class = @models.resnet18

@@ -1,6 +1,6 @@
 import torch
 from torchvision import datasets, transforms as tfs
-
+import numpy as np
 
 class Data():
     def __init__(self, datadir, dataset_name, batch_size, target_type, dataloader_kwargs):
@@ -11,6 +11,13 @@ class Data():
         self.target_type = target_type
 
         self._get_dataset()
+
+        if self.target_type == 'selfsupervised':
+            print('Self-supervised task: predicting rotation of 0, 90, 180 or 270 degrees.')
+            self.train_dataset = SelfsupDataset(self.train_dataset)
+            self.test_dataset = SelfsupDataset(self.test_dataset)
+            self.num_classes = 4
+
         self._create_loaders()
 
 
@@ -72,3 +79,30 @@ class Data():
 
         else:
             raise Exception("Dataset not found: " + self.dataset_name)
+
+
+class SelfsupDataset(torch.utils.data.Dataset):
+    def __init__(self, base_dataset):
+        self.base_dataset = base_dataset
+
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+
+    def __getitem__(self, idx):
+        image = np.asarray(self.base_dataset[idx][0])
+        target = np.random.choice([0, 1, 2, 3])
+        rotated_image = self._rotate_image(image, target*90)
+        return (torch.Tensor(rotated_image), target)
+
+
+    def _rotate_image(self, image, angle):
+        if angle == 0:
+            return image
+        elif angle == 90:
+            return np.flipud(np.transpose(image, (0,2,1))).copy()
+        elif angle == 180:
+            return np.fliplr(np.flipud(image)).copy()
+        elif angle == 270:
+            return np.transpose(np.flipud(image), (0,2,1)).copy()
