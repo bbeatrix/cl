@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torchsummary import summary
 
-import data, models, trainers
+import data, models, trainers, utils
 
 
 @gin.configurable
@@ -98,7 +98,8 @@ def main(argv):
 
     if use_neptune:
         neptune.init(project_qualified_name="bbeatrix/curl")
-        exp = neptune.create_experiment(params={}, name="exp")
+        exp = neptune.create_experiment(params= utils.gin_config_to_dict(gin.config_str()),
+                                        name="exp")
         exp_id = exp.id
     else:
         neptune.init('shared/onboarding', 'ANONYMOUS', backend=neptune.OfflineBackend())
@@ -109,6 +110,7 @@ def main(argv):
     exp_runner = ExperimentRunner(prefix=exp_id)
 
     exp_runner.run_exp()
+
     neptune.stop()
     print('fin')
 
