@@ -3,9 +3,9 @@ ExperimentRunner.model_class = @models.resnet18
 Data.batch_size = 64
 Data.augment = True
 Data.target_type = 'selfsupervised'
-Data.num_tasks = 1
+Data.num_tasks = 5
 
-SupervisedTrainer.epochs_per_task = 250
+SupervisedTrainer.epochs_per_task = 50
 SupervisedTrainer.lr = 0.001
 SupervisedTrainer.optimizer = @torch.optim.SGD
 SupervisedTrainer.log_interval = 100
