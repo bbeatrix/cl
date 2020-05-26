@@ -67,8 +67,8 @@ class ExperimentRunner():
         self.data = data.Data(self.datadir,
                               self.dataloader_kwargs)
 
-        self.train_loader = self.data.train_loader
-        self.test_loader = self.data.test_loader
+        self.train_loaders = self.data.train_loaders
+        self.test_loaders = self.data.test_loaders
 
 
     def setup_trainer(self):
@@ -81,8 +81,9 @@ class ExperimentRunner():
         self.trainer = trainers.SupervisedTrainer(model=self.model,
                                                   device=self.device,
                                                   batch_size=self.data.batch_size,
-                                                  train_loader=self.train_loader,
-                                                  test_loader=self.test_loader)
+                                                  train_loader=self.train_loaders,
+                                                  test_loader=self.test_loaders,
+                                                  num_tasks=self.data.num_tasks)
 
 
     def run_exp(self):
