@@ -13,8 +13,8 @@ import neptune
 @gin.configurable
 class SupervisedTrainer:
     def __init__(self, model, device, batch_size, train_loader, test_loader, num_tasks,
-                 log_interval=float("inf"), epochs_per_task=None, epochs=10, lr=0.001,
-                 wd=5e-4, optimizer=SGD, lr_scheduler=MultiStepLR):
+                 log_interval=float("inf"), epochs=10, lr=0.001, wd=5e-4, optimizer=SGD,
+                 lr_scheduler=MultiStepLR):
 
         self.model = model
         self.device = device
@@ -25,14 +25,7 @@ class SupervisedTrainer:
 
         self.log_interval = log_interval
         self.epochs = epochs
-
-        if epochs_per_task is None:
-            message = "Total number of epochs should be divisible by the number of tasks."
-            assert epochs % num_tasks == 0, message
-            self.epochs_per_task = epochs // num_tasks
-        else:
-            self.epochs_per_task = epochs_per_task
-            self.epochs = num_tasks * epochs_per_task
+        self.total_iters = sum([len(loader) for loader in train_loader]) * self.epochs
 
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
@@ -70,7 +63,8 @@ class SupervisedTrainer:
         for self.current_task in range(0, self.num_tasks):
             current_train_loader = self.train_loader[self.current_task]
             iters_per_epoch = len(current_train_loader)
-            for self.current_epoch in range(1, self.epochs_per_task + 1):
+
+            for self.current_epoch in range(1, self.epochs + 1):
                 results = None
                 epoch_end = False
                 for batch_idx, (x, y) in enumerate(current_train_loader, start=0):
@@ -99,7 +93,7 @@ class SupervisedTrainer:
                                               self.num_tasks,
                                               self.global_iters,
                                               self.current_epoch,
-                                              self.epochs_per_task,
+                                              self.epochs,
                                               batch_idx + 1,
                                               iters_per_epoch,
                                               *[item.data for item in results_log.values()]))
@@ -131,14 +125,13 @@ class SupervisedTrainer:
                         for key, value in test_results.items()}
 
         template = ("Task {}/{}\tTest\t" +
-                    "global iter: {}, epoch: {}/{} ({:.2f}% of {}), metrics: " +
+                    "global iter: {} ({:.2f}%), epoch: {}/{} , metrics: " +
                     ": {:.3f}  ".join(list(test_results.keys()) + ['']))
         print(template.format(self.current_task + 1,
                               self.num_tasks,
                               self.global_iters,
+                              float(self.global_iters)/self.total_iters * 100.,
                               self.current_epoch,
-                              self.epochs_per_task,
-                              float(self.current_epoch) * (self.current_task + 1) / (self.epochs) * 100.,
                               self.epochs,
                               *[item.data for item in test_results.values()]))
 
