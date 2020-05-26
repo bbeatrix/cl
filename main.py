@@ -16,7 +16,7 @@ import data, models, trainers, utils
 class ExperimentRunner():
 
     def __init__(self, seed=0, no_cuda=False, num_workers=2, outdir=None, prefix='',
-                 datadir='~/datasets', model_class=models.resnet50):
+                 datadir=os.path.expanduser('~/datasets'), model_class=models.resnet50):
 
         self.seed = seed
         self.no_cuda = no_cuda
