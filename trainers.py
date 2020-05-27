@@ -13,8 +13,8 @@ import neptune
 @gin.configurable
 class SupervisedTrainer:
     def __init__(self, model, device, batch_size, train_loader, test_loader, num_tasks,
-                 log_interval=float("inf"), epochs=10, lr=0.001, wd=5e-4, optimizer=SGD,
-                 lr_scheduler=MultiStepLR):
+                 log_interval=float("inf"), iters=10000, lr=0.001, wd=5e-4,
+                 optimizer=SGD, lr_scheduler=MultiStepLR):
 
         self.model = model
         self.device = device
@@ -22,16 +22,14 @@ class SupervisedTrainer:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.num_tasks = num_tasks
-
         self.log_interval = log_interval
-        self.epochs = epochs
-        self.total_iters = sum([len(loader) for loader in train_loader]) * self.epochs
+        self.iters = iters
 
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
         self.lr_schedule = lr_scheduler(self.optimizer,
-                                        milestones=[epochs//4, epochs//2],
+                                        milestones=[iters//4, iters//2],
                                         gamma=0.2)
         self.loss_function = nn.CrossEntropyLoss(reduction='none')
 
@@ -58,53 +56,51 @@ class SupervisedTrainer:
 
 
     def train(self):
+        print('Start training.')
         self.global_iters = 0
+        self.iters_per_task = self.iters // self.num_tasks
 
         for self.current_task in range(0, self.num_tasks):
             current_train_loader = self.train_loader[self.current_task]
-            iters_per_epoch = len(current_train_loader)
+            current_train_loader_iterator = iter(current_train_loader)
+            results_to_log = None
 
-            for self.current_epoch in range(1, self.epochs + 1):
-                results = None
-                epoch_end = False
-                for batch_idx, (x, y) in enumerate(current_train_loader, start=0):
-                    self.global_iters += 1
-                    results_log = None
-                    batch_results = self.train_on_batch(x, y)
-                    if results is None:
-                        results = batch_results.copy()
-                    else:
-                        for metric, result in batch_results.items():
-                            results[metric] += result.data
+            for self.iter_count in range(1, self.iters_per_task + 1):
+                self.global_iters += 1
 
-                    if (self.global_iters % self.log_interval == 0):
-                        results_log = {'batch_'+ key: value
-                                       for key, value in batch_results.items()}
-                    elif iters_per_epoch == batch_idx + 1:
-                        epoch_end = True
-                        results_log = {'train_' + key: value/iters_per_epoch
-                                       for key, value in results.items()}
+                try:
+                    (image_batch, target_batch) = next(current_train_loader_iterator)
+                except StopIteration:
+                    current_train_loader_iterator = iter(current_train_loader)
+                    (image_batch, target_batch) = next(current_train_loader_iterator)
 
-                    if results_log is not None:
-                        template = ("Task {}/{}\tTrain\t" +
-                                    "global iter: {}, epoch: {}/{}, batch: {}/{}, metrics: " +
-                                    ": {:.3f}  ".join(list(results_log.keys()) + ['']))
-                        print(template.format(self.current_task + 1,
-                                              self.num_tasks,
-                                              self.global_iters,
-                                              self.current_epoch,
-                                              self.epochs,
-                                              batch_idx + 1,
-                                              iters_per_epoch,
-                                              *[item.data for item in results_log.values()]))
+                batch_results = self.train_on_batch(image_batch, target_batch)
 
-                        for metric, result in results_log.items():
-                            neptune.send_metric(metric, x=self.global_iters, y=result)
+                if results_to_log is None:
+                    results_to_log = batch_results.copy()
+                else:
+                    for metric, result in batch_results.items():
+                        results_to_log[metric] += result.data
 
-                        if epoch_end:
-                            self.test()
-                    else:
-                        continue
+                if (self.global_iters % self.log_interval == 0):
+                    results_to_log = {'train_'+ key: value / self.log_interval
+                                      for key, value in results_to_log.items()}
+
+                    template = ("Task {}/{}\tTrain\t" +
+                                "global iter: {}, batch: {}/{}, metrics:  " +
+                                ": {:.3f}  ".join(list(results_to_log.keys()) + ['']))
+                    print(template.format(self.current_task + 1,
+                                          self.num_tasks,
+                                          self.global_iters,
+                                          self.iter_count,
+                                          self.iters_per_task,
+                                          *[item.data for item in results_to_log.values()]))
+
+                    for metric, result in results_to_log.items():
+                        neptune.send_metric(metric, x=self.global_iters, y=result)
+
+                    results_to_log = None
+                    self.test()
 
 
     def test(self):
@@ -125,16 +121,13 @@ class SupervisedTrainer:
                         for key, value in test_results.items()}
 
         template = ("Task {}/{}\tTest\t" +
-                    "global iter: {} ({:.2f}%), epoch: {}/{} , metrics: " +
+                    "global iter: {} ({:.2f}%), metrics: " +
                     ": {:.3f}  ".join(list(test_results.keys()) + ['']))
         print(template.format(self.current_task + 1,
                               self.num_tasks,
                               self.global_iters,
-                              float(self.global_iters)/self.total_iters * 100.,
-                              self.current_epoch,
-                              self.epochs,
+                              float(self.global_iters)/self.iters * 100.,
                               *[item.data for item in test_results.values()]))
 
         for metric, result in test_results.items():
             neptune.send_metric(metric, x=self.global_iters, y=result)
-

@@ -5,7 +5,7 @@ Data.augment = True
 Data.target_type = 'selfsupervised'
 Data.num_tasks = 5
 
-SupervisedTrainer.epochs = 50
+SupervisedTrainer.iters = 100000
 SupervisedTrainer.lr = 0.001
 SupervisedTrainer.optimizer = @torch.optim.SGD
 SupervisedTrainer.log_interval = 100
