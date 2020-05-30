@@ -1,7 +1,9 @@
 import gin, gin.torch
 import torch
 from torchvision import datasets, transforms as tfs
+from torch.utils.data.dataloader import default_collate
 import numpy as np
+from utils import rotate_image
 
 
 @gin.configurable
@@ -13,6 +15,7 @@ class Data():
         self.dataset_name = dataset_name
         self.batch_size = batch_size
         self.num_tasks = num_tasks
+        self.target_type = target_type
 
         if augment:
             print('Applying augmentation on train dataset.')
@@ -24,29 +27,45 @@ class Data():
         self._get_dataset()
         self._create_tasks()
 
-        if target_type == 'selfsupervised':
-            print('Self-supervised task: predicting rotation of 0, 90, 180 or 270 degrees.')
-            for idx, ds in enumerate(self.train_task_datasets):
-                self.train_task_datasets[idx] = SelfsupDataset(ds)
-            for idx, ds in enumerate(self.test_task_datasets):
-                self.test_task_datasets[idx] = SelfsupDataset(ds)
-            self.num_classes = 4
-
         self._create_loaders()
 
 
     def _create_loaders(self):
+
+        if self.target_type == 'selfsupervised':
+            print('Self-supervised task: predicting rotation of 0, 90, 180 and 270 degrees.')
+            print('Batch size becomes 4x larger, that is: {}.'.format(self.batch_size * 4))
+            self.num_classes = 4
+
+            def _collate_func(batch):
+                batch = default_collate(batch)
+                assert len(batch) == 2, "A batch must contain two tensors: images, labels."
+                images = np.asarray(batch[0])
+                new_images, new_targets = [], []
+                for img in images:
+                    for target in range(0, 4):
+                        rotated_image = rotate_image(img, angle=90*target)
+                        new_images.append(rotated_image)
+                        new_targets.append(target)
+                images_array = np.array(new_images)
+                targets_array = np.array(new_targets)
+                return (torch.Tensor(images_array), torch.LongTensor(targets_array))
+        else:
+            _collate_func = default_collate
+
         self.train_loaders, self.test_loaders = [], []
 
         for ds in self.train_task_datasets:
             self.train_loaders.append(torch.utils.data.DataLoader(ds,
                                                                   batch_size=self.batch_size,
                                                                   shuffle=True,
+                                                                  collate_fn=_collate_func,
                                                                   **self.dataloader_kwargs))
         for ds in self.test_task_datasets:
             self.test_loaders.append(torch.utils.data.DataLoader(ds,
                                                                  batch_size=self.batch_size,
                                                                  shuffle=True,
+                                                                 collate_fn=_collate_func,
                                                                  **self.dataloader_kwargs))
 
 
@@ -128,30 +147,3 @@ class Data():
 
         message = "Number of train datasets and the number of test datasets should be equal."
         assert len(self.train_task_datasets) == len(self.test_task_datasets), message
-
-
-class SelfsupDataset(torch.utils.data.Dataset):
-    def __init__(self, base_dataset):
-        self.base_dataset = base_dataset
-
-
-    def __len__(self):
-        return len(self.base_dataset)
-
-
-    def __getitem__(self, idx):
-        image = np.asarray(self.base_dataset[idx][0])
-        target = np.random.choice([0, 1, 2, 3])
-        rotated_image = self._rotate_image(image, target*90)
-        return (torch.Tensor(rotated_image), target)
-
-
-    def _rotate_image(self, image, angle):
-        if angle == 0:
-            return image
-        elif angle == 90:
-            return np.flipud(np.transpose(image, (0,2,1))).copy()
-        elif angle == 180:
-            return np.fliplr(np.flipud(image)).copy()
-        elif angle == 270:
-            return np.transpose(np.flipud(image), (0,2,1)).copy()

@@ -1,6 +1,6 @@
 ExperimentRunner.model_class = @models.resnet18
 
-Data.batch_size = 64
+Data.batch_size = 16
 Data.augment = True
 Data.target_type = 'selfsupervised'
 Data.num_tasks = 1
