@@ -67,8 +67,7 @@ class ExperimentRunner():
         self.data = data.Data(self.datadir,
                               self.dataloader_kwargs)
 
-        self.train_loaders = self.data.train_loaders
-        self.test_loaders = self.data.test_loaders
+        self.train_loaders, self.test_loaders = self.data.loaders
 
 
     def setup_trainer(self):
