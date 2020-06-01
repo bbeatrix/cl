@@ -1,14 +1,9 @@
-import matplotlib
-matplotlib.use("Agg")
-import seaborn as sns; sns.set(style="ticks", font_scale=1.4, rc={"lines.linewidth": 2.5})
-import matplotlib.pyplot as plt; plt.style.use('seaborn-deep')
-
-import torchvision.utils as tvutils
-import neptune
-from pydoc import locate
 from ast import literal_eval
-import gin, gin.torch
+from pydoc import locate
+
+import neptune
 import numpy as np
+import torchvision as tv
 
 
 def rotate_image(image_array, angle):
@@ -35,6 +30,6 @@ def gin_config_to_dict(gin_config):
     return params
 
 
-def save_image(x, name, it, filename, normalize=True):
-    tvutils.save_image(x, filename, normalize=normalize)
-    neptune.log_image(name, x=it, y=filename)
+def save_image(image, name, iteration, filename, normalize=True):
+    tv.utils.save_image(image, filename, normalize=normalize)
+    neptune.log_image(name, x=iteration, y=filename)
