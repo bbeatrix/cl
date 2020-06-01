@@ -26,7 +26,7 @@ class DataFactory():
 
     @property
     def loaders(self):
-        return {'train_loader': self.train_loaders, 'test_loader': self.test_loaders}
+        return {'train_loaders': self.train_loaders, 'test_loaders': self.test_loaders}
 
 
     def _setup(self):

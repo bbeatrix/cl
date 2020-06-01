@@ -19,7 +19,6 @@ from utils import gin_config_to_dict
 class ExperimentManager():
     def __init__(self, seed=0, no_cuda=False, num_workers=2, outdir=None, prefix='',
                  datadir=os.path.expanduser('~/datasets')):
-
         self.seed = seed
         self.no_cuda = no_cuda
         self.num_workers = num_workers
@@ -66,11 +65,11 @@ class ExperimentManager():
                                                  self.data_factory.input_shape,
                                                  self.data_factory.num_classes)
 
-        self.trainer = trainers.SupervisedTrainer(model=self.model_builder.model,
-                                                  device=self.device,
+        self.trainer = trainers.SupervisedTrainer(device=self.device,
+                                                  model=self.model_builder.model,
                                                   batch_size=self.data_factory.batch_size,
-                                                  **self.data_factory.loaders,
-                                                  num_tasks=self.data_factory.num_tasks)
+                                                  num_tasks=self.data_factory.num_tasks,
+                                                  data_loaders=self.data_factory.loaders)
 
     def run_experiment(self):
         self.trainer.train()
