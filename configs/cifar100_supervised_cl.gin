@@ -1,9 +1,9 @@
-ExperimentRunner.model_class = @models.resnet18
+DataFactory.target_type = 'supervised'
+DataFactory.batch_size = 64
+DataFactory.augment = True
+DataFactory.num_tasks = 5
 
-Data.batch_size = 64
-Data.augment = True
-Data.target_type = 'supervised'
-Data.num_tasks = 5
+ModelBuilder.model_class = @models.resnet18
 
 SupervisedTrainer.iters = 100000
 SupervisedTrainer.lr = 0.001

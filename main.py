@@ -1,22 +1,24 @@
-import neptune
-import gin, gin.torch
-import gin.torch.external_configurables
-from absl import flags, app
-
 import os
 import random
+
+from absl import app, flags, logging
+import gin
+import gin.torch
+import gin.torch.external_configurables
+import neptune
 import numpy as np
 import torch
-from torchsummary import summary
 
-import data, models, trainers, utils
+import data
+import models
+import trainers
+from utils import gin_config_to_dict
 
 
 @gin.configurable
-class ExperimentRunner():
-
+class ExperimentManager():
     def __init__(self, seed=0, no_cuda=False, num_workers=2, outdir=None, prefix='',
-                 datadir=os.path.expanduser('~/datasets'), model_class=models.resnet50):
+                 datadir=os.path.expanduser('~/datasets')):
 
         self.seed = seed
         self.no_cuda = no_cuda
@@ -24,13 +26,10 @@ class ExperimentRunner():
         self.outdir = outdir
         self.prefix = prefix
         self.datadir = datadir
-        self.model_class = model_class
 
         self.setup_environment()
         self.setup_torch()
-        self.setup_data_loaders()
         self.setup_trainer()
-
 
     def setup_environment(self):
         os.makedirs(self.datadir, exist_ok=True)
@@ -40,7 +39,6 @@ class ExperimentRunner():
             self.chkptdir = os.path.join(self.outdir, self.prefix, 'models')
             os.makedirs(self.imagesdir, exist_ok=True)
             os.makedirs(self.chkptdir, exist_ok=True)
-
 
     def setup_torch(self):
         use_cuda = not self.no_cuda and torch.cuda.is_available()
@@ -60,45 +58,35 @@ class ExperimentRunner():
             self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
         else:
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
-        print('Device: ', self.device)
-
-
-    def setup_data_loaders(self):
-        self.data = data.Data(self.datadir,
-                              self.dataloader_kwargs)
-
-        self.train_loaders, self.test_loaders = self.data.loaders
-
+        logging.info("Device: {}".format(self.device))
 
     def setup_trainer(self):
-        self.model = self.model_class(in_channels=self.data.input_shape[0],
-                                      n_classes=self.data.num_classes)
+        self.data_factory = data.DataFactory(self.datadir, self.dataloader_kwargs)
+        self.model_builder = models.ModelBuilder(self.device,
+                                                 self.data_factory.input_shape,
+                                                 self.data_factory.num_classes)
 
-        self.model.to(self.device)
-        summary(self.model, self.data.input_shape)
-
-        self.trainer = trainers.SupervisedTrainer(model=self.model,
+        self.trainer = trainers.SupervisedTrainer(model=self.model_builder.model,
                                                   device=self.device,
-                                                  batch_size=self.data.batch_size,
-                                                  train_loader=self.train_loaders,
-                                                  test_loader=self.test_loaders,
-                                                  num_tasks=self.data.num_tasks)
+                                                  batch_size=self.data_factory.batch_size,
+                                                  **self.data_factory.loaders,
+                                                  num_tasks=self.data_factory.num_tasks)
 
-
-    def run_exp(self):
+    def run_experiment(self):
         self.trainer.train()
 
 
 def main(argv):
     gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param, skip_unknown=True)
+    logging.info("Gin parameter bindings:\n{}".format(gin.config_str()))
 
     use_neptune = "NEPTUNE_API_TOKEN" in os.environ
     exp_id = ''
 
     if use_neptune:
-        neptune.init(project_qualified_name="bbeatrix/curl")
-        exp = neptune.create_experiment(params= utils.gin_config_to_dict(gin.config_str()),
-                                        name="exp")
+        neptune.init(project_qualified_name='bbeatrix/curl')
+        exp = neptune.create_experiment(params=gin_config_to_dict(gin.config_str()),
+                                        name='exp')
         exp_id = exp.id
     else:
         neptune.init('shared/onboarding', 'ANONYMOUS', backend=neptune.OfflineBackend())
@@ -106,17 +94,16 @@ def main(argv):
     neptune.log_text('gin_config', gin.config_str())
     neptune.log_artifact(*FLAGS.gin_file, 'gin_config_{}.gin'.format(exp_id))
 
-    exp_runner = ExperimentRunner(prefix=exp_id)
-
-    exp_runner.run_exp()
+    exp_manager = ExperimentManager(prefix=exp_id)
+    exp_manager.run_experiment()
 
     neptune.stop()
-    print('fin')
+    logging.info("Fin")
 
 
 if __name__ == '__main__':
-    flags.DEFINE_multi_string('gin_file', None, 'List of paths to the config files.')
-    flags.DEFINE_multi_string('gin_param', None, 'Newline separated list of Gin parameter bindings.')
+    flags.DEFINE_multi_string('gin_file', None, "List of paths to the config files.")
+    flags.DEFINE_multi_string('gin_param', None, "Newline separated list of Gin param bindings.")
     FLAGS = flags.FLAGS
 
     app.run(main)

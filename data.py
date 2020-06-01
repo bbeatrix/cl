@@ -10,7 +10,7 @@ from utils import rotate_image
 
 
 @gin.configurable(blacklist=['datadir', 'dataloader_kwargs'])
-class Data():
+class DataFactory():
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar100', batch_size=64,
                  target_type='supervised', augment=False, num_tasks=gin.REQUIRED):
         self.datadir = datadir
