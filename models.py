@@ -5,8 +5,9 @@ from absl import app
 import gin
 import torch
 import torch.nn as nn
-import torchvision as tv
+import torch.nn.functional as F
 from torchsummary import summary
+import torchvision as tv
 
 
 @gin.configurable(blacklist=['device', 'input_shape', 'output_shape'])
@@ -29,6 +30,8 @@ class ModelBuilder():
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):
+    global is_adapters
+    is_adapters = 0
     return NovelResNet(NovelBasicBlock, num_blocks=[2, 2, 2, 2], num_classes=output_shape)
 
 @gin.configurable
@@ -244,7 +247,7 @@ class NovelResNet(nn.Module):
     https://github.com/k-han/AutoNovel/blob/master/selfsupervised_learning.py
     """
     def __init__(self, block, num_blocks, num_classes=10):
-        super(ResNet, self).__init__()
+        super(NovelResNet, self).__init__()
         self.in_planes = 64
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
@@ -284,7 +287,7 @@ class NovelBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1):
-        super(BasicBlock, self).__init__()
+        super(NovelBasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_planes,
                                planes,
                                kernel_size=3,

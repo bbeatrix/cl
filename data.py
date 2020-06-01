@@ -2,8 +2,8 @@ import gin
 import gin.torch
 import numpy as np
 import torch
-from torchvision import datasets, transforms as tfs
 from torch.utils.data.dataloader import default_collate
+from torchvision import datasets, transforms as tfs
 
 from utils import rotate_image
 

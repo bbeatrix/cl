@@ -8,9 +8,8 @@ from torch.optim.lr_scheduler import MultiStepLR
 
 @gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders'])
 class SupervisedTrainer:
-    def __init__(self, device, model, batch_size, num_tasks, data_loaders,
-                 log_interval=float("inf"), iters=10000, lr=0.001, wd=5e-4,
-                 optimizer=torch.optim.SGD, lr_scheduler=MultiStepLR):
+    def __init__(self, device, model, batch_size, num_tasks, data_loaders, log_interval=100,
+                 iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler=MultiStepLR):
         self.device = device
         self.model = model
         self.batch_size = batch_size
@@ -23,9 +22,10 @@ class SupervisedTrainer:
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
-        self.lr_schedule = lr_scheduler(self.optimizer,
-                                        milestones=[iters//4, iters//2],
-                                        gamma=0.2)
+        lr_milestones = [value * self.iters // self.log_interval for value in [1/4, 1/2, 3/4]]
+        self.lr_scheduler = lr_scheduler(self.optimizer,
+                                         milestones=lr_milestones,
+                                         gamma=0.2)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
 
     def train_on_batch(self, input_images, target):
@@ -75,6 +75,11 @@ class SupervisedTrainer:
                         results_to_log[metric] += result.data
 
                 if (self.global_iters % self.log_interval == 0):
+                    self.lr_scheduler.step()
+                    neptune.send_metric('learning_rate',
+                                        x=self.global_iters,
+                                        y=self.optimizer.param_groups[0]['lr'])
+
                     results_to_log = {'train_' + key: value / self.log_interval
                                       for key, value in results_to_log.items()}
 
