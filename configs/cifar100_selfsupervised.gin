@@ -1,14 +1,14 @@
 ExperimentManager.seed = 1
 
 DataFactory.target_type = 'selfsupervised'
-DataFactory.batch_size = 128
+DataFactory.batch_size = 64
 DataFactory.augment = True
 DataFactory.num_tasks = 1
 
 ModelBuilder.model_class = @models.novelresnet18
 
-SupervisedTrainer.iters = 1000
-SupervisedTrainer.lr = 0.1
+SupervisedTrainer.iters = 100000
+SupervisedTrainer.lr = 0.01
 SupervisedTrainer.optimizer = @torch.optim.SGD
 SupervisedTrainer.log_interval = 100
 
