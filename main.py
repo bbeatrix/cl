@@ -1,7 +1,7 @@
 import os
 import random
 
-from absl import app, flags, logging
+from absl import app, flags
 import gin
 import gin.torch
 import gin.torch.external_configurables
@@ -57,7 +57,7 @@ class ExperimentManager():
             self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
         else:
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
-        logging.info("Device: {}".format(self.device))
+        print("Device: {}".format(self.device))
 
     def setup_trainer(self):
         self.data_factory = data.DataFactory(self.datadir, self.dataloader_kwargs)
@@ -77,7 +77,7 @@ class ExperimentManager():
 
 def main(argv):
     gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param, skip_unknown=True)
-    logging.info("Gin parameter bindings:\n{}".format(gin.config_str()))
+    print("Gin parameter bindings:\n{}".format(gin.config_str()))
 
     use_neptune = "NEPTUNE_API_TOKEN" in os.environ
     exp_id = ''
@@ -97,7 +97,7 @@ def main(argv):
     exp_manager.run_experiment()
 
     neptune.stop()
-    logging.info("Fin")
+    print("Fin")
 
 
 if __name__ == '__main__':

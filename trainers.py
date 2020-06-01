@@ -1,5 +1,3 @@
-from absl import logging
-
 import gin
 import gin.torch
 import neptune
@@ -52,7 +50,7 @@ class SupervisedTrainer:
     def train(self):
         self.global_iters = 0
         self.iters_per_task = self.iters // self.num_tasks
-        logging.info("Start training.")
+        print("Start training.")
 
         for self.current_task in range(0, self.num_tasks):
             current_train_loader = self.train_loaders[self.current_task]
@@ -82,12 +80,12 @@ class SupervisedTrainer:
 
                     template = ("Task {}/{}\tTrain\tglobal iter: {}, batch: {}/{}, metrics:  "
                                 + "".join([key + ": {:.3f}  " for key in results_to_log.keys()]))
-                    logging.info(template.format(self.current_task + 1,
-                                                 self.num_tasks,
-                                                 self.global_iters,
-                                                 self.iter_count,
-                                                 self.iters_per_task,
-                                                 *[item.data for item in results_to_log.values()]))
+                    print(template.format(self.current_task + 1,
+                                          self.num_tasks,
+                                          self.global_iters,
+                                          self.iter_count,
+                                          self.iters_per_task,
+                                          *[item.data for item in results_to_log.values()]))
 
                     for metric, result in results_to_log.items():
                         neptune.send_metric(metric, x=self.global_iters, y=result)
@@ -114,11 +112,11 @@ class SupervisedTrainer:
 
         template = ("Task {}/{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
                     + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
-        logging.info(template.format(self.current_task + 1,
-                                     self.num_tasks,
-                                     self.global_iters,
-                                     float(self.global_iters)/self.iters * 100.,
-                                     *[item.data for item in test_results.values()]))
+        print(template.format(self.current_task + 1,
+                              self.num_tasks,
+                              self.global_iters,
+                              float(self.global_iters)/self.iters * 100.,
+                              *[item.data for item in test_results.values()]))
 
         for metric, result in test_results.items():
             neptune.send_metric(metric, x=self.global_iters, y=result)

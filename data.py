@@ -1,4 +1,3 @@
-from absl import logging
 import gin
 import gin.torch
 import numpy as np
@@ -35,7 +34,7 @@ class DataFactory():
         self._create_loaders()
 
     def _get_dataset(self):
-        logging.info("Loading {} dataset from {}.".format(self.dataset_name, self.datadir))
+        print("Loading {} dataset from {}.".format(self.dataset_name, self.datadir))
         augment_transforms = []
         image_transforms = tfs.Compose([tfs.ToTensor()])
 
@@ -56,7 +55,7 @@ class DataFactory():
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
             if self.augment:
-                logging.info("Usinging augmentation on train dataset.")
+                print("Using augmentation on train dataset.")
                 augment_transforms = [tfs.RandomCrop(32, padding=4),
                                       tfs.RandomHorizontalFlip()]
             image_transforms = [tfs.ToTensor(),
@@ -91,8 +90,8 @@ class DataFactory():
         self.train_task_datasets, self.test_task_datasets = [], []
 
         if self.num_tasks > 1:
-            logging.info("Splitting training dataset into {} parts for cl.".format(self.num_tasks))
-            logging.info("The test set remains the original one for each task.")
+            print("Splitting training dataset into {} parts for cl.".format(self.num_tasks))
+            print("The test set remains the original one for each task.")
             targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             labels = np.unique(targets)
 
@@ -119,8 +118,8 @@ class DataFactory():
 
     def _create_loaders(self):
         if self.target_type == 'selfsupervised':
-            logging.info("Self-supervised task: predicting rotation of 0, 90, 180 and 270 degrees.")
-            logging.warning("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
+            print("Self-supervised task: predicting rotation of 0, 90, 180 and 270 degrees.")
+            print("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
             self.num_classes = 4
 
             def _collate_func(batch):
@@ -141,7 +140,7 @@ class DataFactory():
         else:
             _collate_func = default_collate
 
-        logging.info("Creating train and test data loaders.")
+        print("Creating train and test data loaders.")
         self.train_loaders, self.test_loaders = [], []
 
         for ds in self.train_task_datasets:
