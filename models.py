@@ -12,11 +12,13 @@ import torchvision as tv
 
 @gin.configurable(blacklist=['device', 'input_shape', 'output_shape'])
 class ModelBuilder():
-    def __init__(self, device, input_shape, output_shape, model_class):
+    def __init__(self, device, input_shape, output_shape, model_class=gin.REQUIRED,
+                 model_path=None):
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape
         self.model_class = model_class
+        self.model_path = model_path
 
         self._build()
 
@@ -26,6 +28,13 @@ class ModelBuilder():
         self.model.to(self.device)
         print("Model summary:\n")
         summary(self.model, self.input_shape)
+        if self.model_path is not None:
+            print("Load model from {}.".format(self.model_path))
+            state_dict = torch.load(self.model_path)
+            self.model.load_state_dict(state_dict, strict=False)
+            print("Model's state_dict:\n")
+            for param_tensor in self.model.state_dict():
+                print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
 
 
 @gin.configurable

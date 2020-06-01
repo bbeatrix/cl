@@ -85,7 +85,8 @@ def main(argv):
     if use_neptune:
         neptune.init(project_qualified_name='bbeatrix/curl')
         exp = neptune.create_experiment(params=gin_config_to_dict(gin.config_str()),
-                                        name='exp')
+                                        name='exp',
+                                        upload_source_files=['./*.py'])
         exp_id = exp.id
     else:
         neptune.init('shared/onboarding', 'ANONYMOUS', backend=neptune.OfflineBackend())
