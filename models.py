@@ -30,9 +30,13 @@ class ModelBuilder():
         summary(self.model, self.input_shape)
         if self.model_path is not None:
             print("Load model from {}.".format(self.model_path))
-            state_dict = torch.load(self.model_path)
-            self.model.load_state_dict(state_dict, strict=False)
-            print("Model's state_dict:\n")
+            loaded_state = torch.load(self.model_path)
+            model_state = self.model.state_dict()
+            loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
+                            (model_state[k].shape == loaded_state[k].shape)}
+            model_state.update(loaded_state)
+            self.model.load_state_dict(model_state)
+            print("Model's state_dict:")
             for param_tensor in self.model.state_dict():
                 print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
 
