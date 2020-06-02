@@ -1,4 +1,5 @@
 ExperimentManager.seed = 1
+ExperimentManager.logdir = 'out/'
 
 DataFactory.target_type = 'selfsupervised'
 DataFactory.batch_size = 64
@@ -8,7 +9,7 @@ DataFactory.num_tasks = 1
 ModelBuilder.model_class = @models.novelresnet18
 ModelBuilder.model_path = 'pretrained_models/novelresnet18_cifar100.pth'
 
-SupervisedTrainer.iters = 100000
+SupervisedTrainer.iters = 1000
 SupervisedTrainer.lr = 0.01
 SupervisedTrainer.optimizer = @torch.optim.SGD
 SupervisedTrainer.log_interval = 100

@@ -1,3 +1,5 @@
+import os
+
 import gin
 import gin.torch
 import neptune
@@ -8,10 +10,11 @@ from torch.optim.lr_scheduler import MultiStepLR
 from utils import save_image
 
 
-@gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders'])
+@gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders','logdir'])
 class SupervisedTrainer:
-    def __init__(self, device, model, batch_size, num_tasks, data_loaders, log_interval=100,
-                 iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler=MultiStepLR):
+    def __init__(self, device, model, batch_size, num_tasks, data_loaders, logdir,
+                 log_interval=100, iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD,
+                 lr_scheduler=MultiStepLR):
         self.device = device
         self.model = model
         self.batch_size = batch_size
@@ -28,6 +31,7 @@ class SupervisedTrainer:
                                          milestones=[],
                                          gamma=0.2)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        self.logdir = logdir
 
     def train_on_batch(self, input_images, target):
         self.optimizer.zero_grad()
@@ -81,10 +85,11 @@ class SupervisedTrainer:
                                         x=self.global_iters,
                                         y=self.optimizer.param_groups[0]['lr'])
 
-                    save_image(image_batch[:self.batch_size, :, :, :],
-                               name='train_images',
-                               iteration=self.global_iters,
-                               filename='train_images.png')
+                    if self.logdir is not None:
+                        save_image(image_batch[:self.batch_size, :, :, :],
+                                   name='train_images',
+                                   iteration=self.global_iters,
+                                   filename=os.path.join(self.logdir, 'train_images.png'))
 
                     results_to_log = {'train_' + key: value / self.log_interval
                                       for key, value in results_to_log.items()}

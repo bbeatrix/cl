@@ -17,12 +17,12 @@ from utils import gin_config_to_dict
 
 @gin.configurable
 class ExperimentManager():
-    def __init__(self, seed=0, no_cuda=False, num_workers=2, outdir=None, prefix='',
+    def __init__(self, seed=0, no_cuda=False, num_workers=2, logdir=None, prefix='',
                  datadir=os.path.expanduser('~/datasets')):
         self.seed = seed
         self.no_cuda = no_cuda
         self.num_workers = num_workers
-        self.outdir = outdir
+        self.logdir = logdir
         self.prefix = prefix
         self.datadir = datadir
 
@@ -33,11 +33,9 @@ class ExperimentManager():
     def setup_environment(self):
         os.makedirs(self.datadir, exist_ok=True)
 
-        if self.outdir is not None:
-            self.imagesdir = os.path.join(self.outdir, self.prefix, 'images')
-            self.chkptdir = os.path.join(self.outdir, self.prefix, 'models')
-            os.makedirs(self.imagesdir, exist_ok=True)
-            os.makedirs(self.chkptdir, exist_ok=True)
+        if self.logdir is not None:
+            self.logdir = os.path.join(self.logdir, self.prefix)
+            os.makedirs(self.logdir, exist_ok=True)
 
     def setup_torch(self):
         use_cuda = not self.no_cuda and torch.cuda.is_available()
@@ -69,7 +67,8 @@ class ExperimentManager():
                                                   model=self.model_builder.model,
                                                   batch_size=self.data_factory.batch_size,
                                                   num_tasks=self.data_factory.num_tasks,
-                                                  data_loaders=self.data_factory.loaders)
+                                                  data_loaders=self.data_factory.loaders,
+                                                  logdir=self.logdir)
 
     def run_experiment(self):
         self.trainer.train()
