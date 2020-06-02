@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
+from utils import save_image
+
 
 @gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders'])
 class SupervisedTrainer:
@@ -79,6 +81,11 @@ class SupervisedTrainer:
                     neptune.send_metric('learning_rate',
                                         x=self.global_iters,
                                         y=self.optimizer.param_groups[0]['lr'])
+
+                    save_image(image_batch[:self.batch_size, :, :, :],
+                               name='train_images',
+                               iteration=self.global_iters,
+                               filename='train_images.png')
 
                     results_to_log = {'train_' + key: value / self.log_interval
                                       for key, value in results_to_log.items()}
