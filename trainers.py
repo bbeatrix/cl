@@ -24,9 +24,8 @@ class SupervisedTrainer:
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
-        lr_milestones = [value * self.iters // self.log_interval for value in [1/4, 1/2, 3/4]]
         self.lr_scheduler = lr_scheduler(self.optimizer,
-                                         milestones=lr_milestones,
+                                         milestones=[],
                                          gamma=0.2)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
 

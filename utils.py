@@ -8,13 +8,13 @@ import torchvision as tv
 
 def rotate_image(image_array, angle):
     if angle == 0:
-       return image_array
+        return image_array
     elif angle == 90:
-       return np.flipud(np.transpose(image_array, (0,2,1))).copy()
+        return image_array.swapaxes(-2, -1)[..., ::-1, :].copy()
     elif angle == 180:
-       return np.fliplr(np.flipud(image_array)).copy()
+        return image_array[..., ::-1, ::-1].copy()
     elif angle == 270:
-       return np.transpose(np.flipud(image_array), (0,2,1)).copy()
+        return image_array.swapaxes(-2, -1)[..., ::-1].copy()
 
 
 def gin_config_to_dict(gin_config):
