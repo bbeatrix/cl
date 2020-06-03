@@ -4,7 +4,7 @@ ExperimentManager.logdir = 'out/'
 DataFactory.target_type = 'selfsupervised'
 DataFactory.batch_size = 64
 DataFactory.augment = True
-DataFactory.num_tasks = 1
+DataFactory.num_tasks = 5
 
 ModelBuilder.model_class = @models.novelresnet18
 ModelBuilder.model_path = 'pretrained_models/novelresnet18_cifar100.pth'
