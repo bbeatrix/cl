@@ -10,8 +10,12 @@ from utils import rotate_image
 
 @gin.configurable(blacklist=['datadir', 'dataloader_kwargs'])
 class DataFactory():
+    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised']
+
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar100', batch_size=64,
-                 target_type='supervised', augment=False, num_tasks=gin.REQUIRED):
+                 target_type='supervised', augment=False, num_tasks=1):
+        err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
+        assert (target_type in self.TARGET_TYPES) == True, err_message
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
         self.dataset_name = dataset_name
@@ -120,7 +124,7 @@ class DataFactory():
         if self.target_type == 'selfsupervised':
             print("Self-supervised task: predicting rotation of 0, 90, 180 and 270 degrees.")
             print("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
-            self.num_classes = 4
+            self.num_classes = (4,)
 
             def _collate_func(batch):
                 batch = default_collate(batch)
@@ -137,7 +141,30 @@ class DataFactory():
                 images_array = np.array(new_images)
                 targets_array = np.array(new_targets)
                 return (torch.Tensor(images_array), torch.LongTensor(targets_array))
+        elif self.target_type == 'auxiliary selfsupervised':
+            print("Auxiliary task: predicting rotation of 0, 90, 180 and 270 degrees.")
+            print("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
+            self.num_classes = (self.num_classes, 4,)
+
+            def _collate_func(batch):
+                batch = default_collate(batch)
+                err_message = "A batch must contain two tensors: images, labels."
+                assert len(batch) == 2, err_message
+
+                images, targets = np.asarray(batch[0]), np.asarray(batch[1])
+                aux_images, aux_targets = [], []
+                for img in images:
+                    for target in range(0, 4):
+                        rotated_image = rotate_image(img, angle=90*target)
+                        aux_images.append(rotated_image)
+                        aux_targets.append(target)
+                images = torch.Tensor(images)
+                targets = torch.LongTensor(targets)
+                aux_images = torch.Tensor(np.array(aux_images))
+                aux_targets = torch.LongTensor(np.array(aux_targets))
+                return (images, targets, aux_images, aux_targets)
         else:
+            self.num_classes = (self.num_classes,)
             _collate_func = default_collate
 
         print("Creating train and test data loaders.")

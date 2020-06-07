@@ -11,41 +11,30 @@ import torchvision as tv
 
 
 @gin.configurable(blacklist=['device', 'input_shape', 'output_shape'])
-class ModelBuilder():
-    def __init__(self, device, input_shape, output_shape, model_class=gin.REQUIRED,
-                 model_path=None):
-        self.device = device
-        self.input_shape = input_shape
-        self.output_shape = output_shape
-        self.model_class = model_class
-        self.model_path = model_path
-
-        self._build()
-
-    def _build(self):
-        self.model = self.model_class(self.input_shape,
-                                      self.output_shape)
-        self.model.to(self.device)
-        print("Model summary:\n")
-        summary(self.model, self.input_shape)
-        if self.model_path is not None:
-            print("Load model from {}.".format(self.model_path))
-            loaded_state = torch.load(self.model_path)
-            model_state = self.model.state_dict()
-            loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
-                            (model_state[k].shape == loaded_state[k].shape)}
-            model_state.update(loaded_state)
-            self.model.load_state_dict(model_state)
-            print("Model's state_dict:")
-            for param_tensor in self.model.state_dict():
-                print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
+def model_builder(device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED):
+    model = model_class(input_shape, output_shape)
+    model.to(device)
+    print("Model summary:\n")
+    summary(model, input_shape)
+    if model_path is not None:
+        print("Load model from {}.".format(model_path))
+        loaded_state = torch.load(model_path)
+        model_state = model.state_dict()
+        loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
+                        (model_state[k].shape == loaded_state[k].shape)}
+        model_state.update(loaded_state)
+        model.load_state_dict(model_state)
+        print("Model's state_dict:")
+        for param_tensor in model.state_dict():
+            print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+    return model
 
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):
     global is_adapters
     is_adapters = 0
-    return NovelResNet(NovelBasicBlock, num_blocks=[2, 2, 2, 2], num_classes=output_shape)
+    return NovelResNet(NovelBasicBlock, num_blocks=[2, 2, 2, 2], output_shape=output_shape)
 
 @gin.configurable
 def resnet18(input_shape, output_shape):
@@ -245,21 +234,27 @@ class ResNet(nn.Module):
     def __init__(self, input_shape, output_shape, *args, **kwargs):
         super().__init__()
         self.features = ResNetFeatures(input_shape[0], *args, **kwargs)
-        self.predictions = ResnetTop(self.features.blocks[-1].blocks[-1].expanded_channels,
-                                     output_shape)
+        self.predictions = nn.ModuleList()
+        for out in output_shapes:
+            new_top = ResnetTop(self.features.blocks[-1].blocks[-1].expanded_channels, out)
+            self.predictions.append(new_top)
 
     def forward(self, x):
         x = self.features(x)
-        out = self.predictions(x)
-        return out
-
+        outputs = []
+        for top in self.predictions:
+            outputs.append(self.predictions(x))
+        if len(outputs) > 1:
+            return outputs
+        else:
+            return outputs[0]
 
 class NovelResNet(nn.Module):
     """
     ResNet model from
     https://github.com/k-han/AutoNovel/blob/master/selfsupervised_learning.py
     """
-    def __init__(self, block, num_blocks, num_classes=10):
+    def __init__(self, block, num_blocks, output_shape=(10,)):
         super(NovelResNet, self).__init__()
         self.in_planes = 64
 
@@ -269,7 +264,10 @@ class NovelResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-        self.linear = nn.Linear(512*block.expansion, num_classes)
+        self.heads = nn.ModuleList()
+        for i in range(len(output_shape)):
+            new_head = nn.Linear(512 * block.expansion, output_shape[i])
+            self.heads.append(new_head)
         if is_adapters:
             self.parallel_conv1 = nn.Conv2d(3, 64, kernel_size=1, stride=1, bias=False)
 
@@ -283,7 +281,7 @@ class NovelResNet(nn.Module):
 
     def forward(self, x):
         if is_adapters:
-            out = F.relu(self.bn1(self.conv1(x)+self.parallel_conv1(x)))
+            out = F.relu(self.bn1(self.conv1(x) + self.parallel_conv1(x)))
         else:
             out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
@@ -292,8 +290,13 @@ class NovelResNet(nn.Module):
         out = self.layer4(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        if len(outputs) > 1:
+            return outputs
+        else:
+            return outputs[0]
 
 
 class NovelBasicBlock(nn.Module):

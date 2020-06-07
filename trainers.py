@@ -10,8 +10,15 @@ from torch.optim.lr_scheduler import MultiStepLR
 from utils import save_image
 
 
+def trainer_maker(target_type, *args):
+    if target_type == 'auxiliary selfsupervised':
+        return SupervisedWithAuxTrainer(*args)
+    else:
+        return SupervisedTrainer(*args)
+
+
 @gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders','logdir'])
-class SupervisedTrainer:
+class Trainer:
     def __init__(self, device, model, batch_size, num_tasks, data_loaders, logdir,
                  log_interval=100, iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD,
                  lr_scheduler=MultiStepLR):
@@ -25,20 +32,18 @@ class SupervisedTrainer:
         self.iters = iters
 
         self.optimizer = optimizer(self.model.parameters(),
-                                   lr,
-                                   weight_decay=wd)
+                                       lr,
+                                       weight_decay=wd)
         self.lr_scheduler = lr_scheduler(self.optimizer,
                                          milestones=[],
                                          gamma=0.2)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
         self.logdir = logdir
 
-    def train_on_batch(self, input_images, target):
-        self.optimizer.zero_grad()
-        results = self.test_on_batch(input_images, target)
-        results['loss_mean'].backward()
-        self.optimizer.step()
-        return results
+
+class SupervisedTrainer(Trainer):
+    def __init__(self, *args):
+        super().__init__(*args)
 
     def test_on_batch(self, input_images, target):
         input_images = input_images.to(self.device)
@@ -48,8 +53,15 @@ class SupervisedTrainer:
         loss_mean = torch.mean(loss_per_sample)
         predictions = torch.argmax(model_output, dim=1)
         accuracy = torch.mean(torch.eq(predictions, target).float())
-        results = {'loss_mean': loss_mean,
+        results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy}
+        return results
+
+    def train_on_batch(self, batch):
+        self.optimizer.zero_grad()
+        results = self.test_on_batch(*batch)
+        results['total_loss_mean'].backward()
+        self.optimizer.step()
         return results
 
     def train(self):
@@ -66,12 +78,12 @@ class SupervisedTrainer:
                 self.global_iters += 1
 
                 try:
-                    (image_batch, target_batch) = next(current_train_loader_iterator)
+                    batch = next(current_train_loader_iterator)
                 except StopIteration:
                     current_train_loader_iterator = iter(current_train_loader)
-                    (image_batch, target_batch) = next(current_train_loader_iterator)
+                    batch = next(current_train_loader_iterator)
 
-                batch_results = self.train_on_batch(image_batch, target_batch)
+                batch_results = self.train_on_batch(batch)
 
                 if results_to_log is None:
                     results_to_log = batch_results.copy()
@@ -86,7 +98,7 @@ class SupervisedTrainer:
                                         y=self.optimizer.param_groups[0]['lr'])
 
                     if self.logdir is not None:
-                        save_image(image_batch[:self.batch_size, :, :, :],
+                        save_image(batch[0][:self.batch_size, :, :, :],
                                    name='train_images',
                                    iteration=self.global_iters,
                                    filename=os.path.join(self.logdir, 'train_images.png'))
@@ -114,8 +126,8 @@ class SupervisedTrainer:
         current_test_loader = self.test_loaders[self.current_task]
 
         with torch.no_grad():
-            for test_batch_count, (x_test, y_test) in enumerate(current_test_loader, start=0):
-                test_batch_results = self.test_on_batch(x_test, y_test)
+            for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
+                test_batch_results = self.test_on_batch(*test_batch)
 
                 if test_results is None:
                     test_results = test_batch_results.copy()
@@ -131,8 +143,41 @@ class SupervisedTrainer:
         print(template.format(self.current_task + 1,
                               self.num_tasks,
                               self.global_iters,
-                              float(self.global_iters)/self.iters * 100.,
+                              float(self.global_iters) / self.iters * 100.,
                               *[item.data for item in test_results.values()]))
 
         for metric, result in test_results.items():
             neptune.send_metric(metric, x=self.global_iters, y=result)
+
+
+class SupervisedWithAuxTrainer(SupervisedTrainer):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.aux_loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+
+    def test_on_batch(self, input_images, target, aux_images, aux_target):
+        inputs = list(map(lambda x: x.to(self.device), [input_images, aux_images]))
+        targets = list(map(lambda x: x.to(self.device), [target, aux_target]))
+
+        outputs = []
+        for idx, x in enumerate(inputs):
+            model_outputs = self.model(x)
+            outputs.append(model_outputs[idx])
+
+        loss_per_sample = self.loss_function(outputs[0], targets[0])
+        loss_mean = torch.mean(loss_per_sample)
+        aux_loss_per_sample = self.aux_loss_function(outputs[1], targets[1])
+        aux_loss_mean = torch.mean(aux_loss_per_sample)
+        total_loss_mean = loss_mean + aux_loss_mean
+
+        predictions = torch.argmax(outputs[0], dim=1)
+        accuracy = torch.mean(torch.eq(predictions, targets[0]).float())
+        aux_predictions = torch.argmax(outputs[1], dim=1)
+        aux_accuracy = torch.mean(torch.eq(aux_predictions, targets[1]).float())
+
+        results = {'total_loss_mean': total_loss_mean,
+                   'loss_mean': loss_mean,
+                   'aux_loss_mean': aux_loss_mean,
+                   'accuracy': accuracy,
+                   'aux_accuracy': aux_accuracy}
+        return results
