@@ -58,19 +58,20 @@ class ExperimentManager():
         print("Device: {}".format(self.device))
 
     def setup_trainer(self):
-        self.data_factory = data.DataFactory(self.datadir,
-                                             self.dataloader_kwargs)
+        self.data = data.Data(self.datadir,
+                              self.dataloader_kwargs)
 
-        self.model = models.model_builder(self.device,
-                                          self.data_factory.input_shape,
-                                          self.data_factory.num_classes)
+        self.model = models.Model(self.device,
+                                  self.data.input_shape,
+                                  self.data.num_classes)
 
-        self.trainer = trainers.trainer_maker(self.data_factory.target_type,
+        self.trainer = trainers.trainer_maker(self.data.target_type,
                                               self.device,
-                                              self.model,
-                                              self.data_factory.batch_size,
-                                              self.data_factory.num_tasks,
-                                              self.data_factory.loaders,
+                                              self.model.build(),
+                                              self.data.batch_size,
+                                              self.data.num_tasks,
+                                              self.data.num_cycles,
+                                              self.data.loaders,
                                               self.logdir)
 
     def run_experiment(self):

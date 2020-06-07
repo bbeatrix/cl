@@ -9,11 +9,11 @@ from utils import rotate_image
 
 
 @gin.configurable(blacklist=['datadir', 'dataloader_kwargs'])
-class DataFactory():
+class Data:
     TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar100', batch_size=64,
-                 target_type='supervised', augment=False, num_tasks=1):
+                 target_type='supervised', augment=False, num_tasks=1, num_cycles=1):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         self.datadir = datadir
@@ -23,6 +23,7 @@ class DataFactory():
         self.target_type = target_type
         self.augment = augment
         self.num_tasks = num_tasks
+        self.num_cycles = num_cycles
 
         self._setup()
 
@@ -182,3 +183,5 @@ class DataFactory():
                                                                  shuffle=True,
                                                                  collate_fn=_collate_func,
                                                                  **self.dataloader_kwargs))
+        self.train_loaders = self.train_loaders * self.num_cycles
+        self.test_loaders = self.test_loaders * self.num_cycles

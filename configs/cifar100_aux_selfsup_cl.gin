@@ -1,13 +1,14 @@
 ExperimentManager.seed = 1
 
-DataFactory.target_type = 'auxiliary selfsupervised'
-DataFactory.batch_size = 64
-DataFactory.augment = True
-DataFactory.num_tasks = 5
+Data.target_type = 'auxiliary selfsupervised'
+Data.batch_size = 64
+Data.augment = True
+Data.num_tasks = 5
+Data.num_cycles = 2
 
-model_builder.model_class = @models.novelresnet18
+Model.model_class = @models.novelresnet18
 
-Trainer.iters = 20000
+Trainer.iters = 40000
 Trainer.lr = 0.01
 Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100

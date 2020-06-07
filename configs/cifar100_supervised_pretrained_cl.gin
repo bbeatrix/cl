@@ -1,18 +1,18 @@
 ExperimentManager.seed = 1
 ExperimentManager.logdir = 'out/'
 
-DataFactory.target_type = 'supervised'
-DataFactory.batch_size = 64
-DataFactory.augment = True
-DataFactory.num_tasks = 5
+Data.target_type = 'supervised'
+Data.batch_size = 64
+Data.augment = True
+Data.num_tasks = 5
 
-ModelBuilder.model_class = @models.novelresnet18
-ModelBuilder.model_path = 'pretrained_models/novelresnet18_cifar100.pth'
+Model.model_class = @models.novelresnet18
+Model.model_path = 'pretrained_models/novelresnet18_cifar100.pth'
 
-SupervisedTrainer.iters = 20000
-SupervisedTrainer.lr = 0.01
-SupervisedTrainer.optimizer = @torch.optim.SGD
-SupervisedTrainer.log_interval = 100
+Trainer.iters = 20000
+Trainer.lr = 0.01
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
 
 torch.optim.SGD.momentum = 0.9
 torch.optim.SGD.nesterov = True

@@ -17,15 +17,17 @@ def trainer_maker(target_type, *args):
         return SupervisedTrainer(*args)
 
 
-@gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'data_loaders','logdir'])
+@gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'num_cycles',
+                             'data_loaders', 'logdir'])
 class Trainer:
-    def __init__(self, device, model, batch_size, num_tasks, data_loaders, logdir,
+    def __init__(self, device, model, batch_size, num_tasks, num_cycles, data_loaders, logdir,
                  log_interval=100, iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD,
                  lr_scheduler=MultiStepLR):
         self.device = device
         self.model = model
         self.batch_size = batch_size
         self.num_tasks = num_tasks
+        self.num_cycles = num_cycles
         self.train_loaders = data_loaders['train_loaders']
         self.test_loaders = data_loaders['test_loaders']
         self.log_interval = log_interval
@@ -66,10 +68,10 @@ class SupervisedTrainer(Trainer):
 
     def train(self):
         self.global_iters = 0
-        self.iters_per_task = self.iters // self.num_tasks
+        self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
         print("Start training.")
 
-        for self.current_task in range(0, self.num_tasks):
+        for self.current_task in range(0, self.num_tasks * self.num_cycles):
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
@@ -106,10 +108,11 @@ class SupervisedTrainer(Trainer):
                     results_to_log = {'train_' + key: value / self.log_interval
                                       for key, value in results_to_log.items()}
 
-                    template = ("Task {}/{}\tTrain\tglobal iter: {}, batch: {}/{}, metrics:  "
+                    template = ("Task {}/{}x{}\tTrain\tglobal iter: {}, batch: {}/{}, metrics:  "
                                 + "".join([key + ": {:.3f}  " for key in results_to_log.keys()]))
                     print(template.format(self.current_task + 1,
                                           self.num_tasks,
+                                          self.num_cycles,
                                           self.global_iters,
                                           self.iter_count,
                                           self.iters_per_task,
@@ -138,10 +141,11 @@ class SupervisedTrainer(Trainer):
         test_results = {'test_' + key: value / (test_batch_count + 1)
                         for key, value in test_results.items()}
 
-        template = ("Task {}/{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
+        template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
                     + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
         print(template.format(self.current_task + 1,
                               self.num_tasks,
+                              self.num_cycles,
                               self.global_iters,
                               float(self.global_iters) / self.iters * 100.,
                               *[item.data for item in test_results.values()]))

@@ -11,23 +11,31 @@ import torchvision as tv
 
 
 @gin.configurable(blacklist=['device', 'input_shape', 'output_shape'])
-def model_builder(device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED):
-    model = model_class(input_shape, output_shape)
-    model.to(device)
-    print("Model summary:\n")
-    summary(model, input_shape)
-    if model_path is not None:
-        print("Load model from {}.".format(model_path))
-        loaded_state = torch.load(model_path)
-        model_state = model.state_dict()
-        loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
-                        (model_state[k].shape == loaded_state[k].shape)}
-        model_state.update(loaded_state)
-        model.load_state_dict(model_state)
-        print("Model's state_dict:")
-        for param_tensor in model.state_dict():
-            print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-    return model
+class Model:
+    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED):
+        self.device = device
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        self.model_path = model_path
+        self.model_class = model_class
+
+    def build(self):
+        self.model = self.model_class(self.input_shape, self.output_shape)
+        self.model.to(self.device)
+        print("Model summary:\n")
+        summary(self.model, self.input_shape)
+        if self.model_path is not None:
+            print("Load model from {}.".format(self.model_path))
+            loaded_state = torch.load(self.model_path)
+            model_state = self.model.state_dict()
+            loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
+                            (model_state[k].shape == loaded_state[k].shape)}
+            model_state.update(loaded_state)
+            self.model.load_state_dict(model_state)
+            print("Model's state_dict:")
+            for param_tensor in self.model.state_dict():
+                print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
+        return self.model
 
 
 @gin.configurable
