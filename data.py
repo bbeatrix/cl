@@ -8,22 +8,24 @@ from torchvision import datasets, transforms as tfs
 from utils import rotate_image
 
 
-@gin.configurable(blacklist=['datadir', 'dataloader_kwargs'])
+@gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
     TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised']
 
-    def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar100', batch_size=64,
-                 target_type='supervised', augment=False, num_tasks=1, num_cycles=1):
+    def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
+                 target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=True):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
         self.dataset_name = dataset_name
+        self.image_size = image_size
         self.batch_size = batch_size
         self.target_type = target_type
         self.augment = augment
         self.num_tasks = num_tasks
         self.num_cycles = num_cycles
+        self.apply_vit_transforms = apply_vit_transforms
 
         self._setup()
 
@@ -59,13 +61,27 @@ class Data:
         elif self.dataset_name == 'cifar100':
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
-            if self.augment:
-                print("Using augmentation on train dataset.")
-                augment_transforms = [tfs.RandomCrop(32, padding=4),
-                                      tfs.RandomHorizontalFlip()]
             image_transforms = [tfs.ToTensor(),
                                 tfs.Normalize(mean=[0.507, 0.487, 0.441],
                                               std=[0.267, 0.256, 0.276])]
+
+            if self.augment:
+                print("Using augmentation on train dataset.")
+                if self.apply_vit_transforms is True:
+                    self.input_shape = (3, self.image_size, self.image_size)
+
+                    augment_transforms = [tfs.Resize(self.image_size),
+                                          #tfs.RandomCrop(384, padding=0),
+                                          tfs.RandomHorizontalFlip()]
+
+                    image_transforms = [tfs.Resize(self.image_size),
+                                        tfs.ToTensor(),
+                                        tfs.Normalize(mean=[0.5, 0.5, 0.5],
+                                                      std=[0.5, 0.5, 0.5])]
+                else:
+                    augment_transforms = [tfs.RandomCrop(32, padding=4),
+                                          tfs.RandomHorizontalFlip()]
+
             train_transforms = tfs.Compose(augment_transforms + image_transforms)
             test_transforms = tfs.Compose(image_transforms)
 
@@ -80,14 +96,39 @@ class Data:
         elif self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
 
+            image_transforms = [tfs.ToTensor(),
+                                tfs.Normalize(mean=[0.507, 0.487, 0.441],
+                                              std=[0.267, 0.256, 0.276])]
+            augment_transforms = []
+
+            if self.augment:
+                print("Using augmentation on train dataset.")
+                if self.apply_vit_transforms is True:
+                    self.input_shape = (3, self.image_size, self.image_size)
+
+                    augment_transforms = [tfs.Resize(self.image_size),
+                                          #tfs.RandomCrop(384, padding=0),
+                                          tfs.RandomHorizontalFlip()]
+
+                    image_transforms = [tfs.Resize(self.image_size),
+                                        tfs.ToTensor(),
+                                        tfs.Normalize(mean=[0.5, 0.5, 0.5],
+                                                      std=[0.5, 0.5, 0.5])]
+                else:
+                    augment_transforms = [tfs.RandomCrop(32, padding=4),
+                                          tfs.RandomHorizontalFlip()]
+
+            train_transforms = tfs.Compose(augment_transforms + image_transforms)
+            test_transforms = tfs.Compose(image_transforms)
+
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,
                                                   download=True,
-                                                  transform=image_transforms)
+                                                  transform=train_transforms)
             self.test_dataset = datasets.CIFAR10(self.datadir,
                                                  train=False,
                                                  download=True,
-                                                 transform=image_transforms)
+                                                 transform=test_transforms)
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 

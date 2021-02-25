@@ -5,7 +5,7 @@ import gin.torch
 import neptune
 import numpy as np
 import torch
-from torch.optim.lr_scheduler import MultiStepLR
+from torch.optim.lr_scheduler import MultiStepLR, OneCycleLR
 
 from utils import save_image
 
@@ -17,12 +17,12 @@ def trainer_maker(target_type, *args):
         return SupervisedTrainer(*args)
 
 
-@gin.configurable(blacklist=['device', 'model', 'batch_size', 'num_tasks', 'num_cycles',
-                             'data_loaders', 'logdir'])
+@gin.configurable(denylist=['device', 'model', 'batch_size', 'num_tasks', 'num_cycles',
+                            'data_loaders', 'logdir'])
 class Trainer:
     def __init__(self, device, model, batch_size, num_tasks, num_cycles, data_loaders, logdir,
-                 log_interval=100, iters=1000, lr=0.1, wd=5e-4, optimizer=torch.optim.SGD,
-                 lr_scheduler=MultiStepLR):
+                 log_interval=100, iters=1000, lr=0.1, lr_warmup_steps=500, wd=5e-4,
+                 optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR):
         self.device = device
         self.model = model
         self.batch_size = batch_size
@@ -34,11 +34,16 @@ class Trainer:
         self.iters = iters
 
         self.optimizer = optimizer(self.model.parameters(),
-                                       lr,
-                                       weight_decay=wd)
-        self.lr_scheduler = lr_scheduler(self.optimizer,
-                                         milestones=[],
-                                         gamma=0.2)
+                                   lr,
+                                   weight_decay=wd)
+        #self.lr_scheduler = lr_scheduler(self.optimizer,
+        #                                 milestones=[],
+        #                                 gamma=0.2)
+
+        self.lr_scheduler = OneCycleLR(self.optimizer,
+                                       max_lr=lr,
+                                       pct_start=lr_warmup_steps / self.iters,
+                                       total_steps=self.iters)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
         self.logdir = logdir
 
@@ -64,6 +69,7 @@ class SupervisedTrainer(Trainer):
         results = self.test_on_batch(*batch)
         results['total_loss_mean'].backward()
         self.optimizer.step()
+        self.lr_scheduler.step()
         return results
 
     def train(self):
@@ -94,7 +100,7 @@ class SupervisedTrainer(Trainer):
                         results_to_log[metric] += result.data
 
                 if (self.global_iters % self.log_interval == 0):
-                    self.lr_scheduler.step()
+                    # self.lr_scheduler.step()    # why was this here??
                     neptune.send_metric('learning_rate',
                                         x=self.global_iters,
                                         y=self.optimizer.param_groups[0]['lr'])

@@ -3,6 +3,8 @@ from functools import partial
 
 from absl import app
 import gin
+import timm
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +12,7 @@ from torchsummary import summary
 import torchvision as tv
 
 
-@gin.configurable(blacklist=['device', 'input_shape', 'output_shape'])
+@gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
 class Model:
     def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED):
         self.device = device
@@ -22,6 +24,9 @@ class Model:
     def build(self):
         self.model = self.model_class(self.input_shape, self.output_shape)
         self.model.to(self.device)
+        #if len(torch.cuda.device_count()) > 1:
+        #    model = torch.nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
+
         print("Model summary:\n")
         summary(self.model, self.input_shape)
         if self.model_path is not None:
@@ -36,6 +41,31 @@ class Model:
             for param_tensor in self.model.state_dict():
                 print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
         return self.model
+
+
+@gin.configurable
+def vit_pretrained(input_shape, output_shape):
+    return VisualTransformer(input_shape, output_shape)
+
+
+class VisualTransformer(nn.Module):
+    def __init__(self, input_shape, output_shape, *args, **kwargs):
+        super().__init__()
+        self.base_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=0)
+        self.output_heads = nn.ModuleList()
+        for out in output_shape:
+            head = nn.Linear(self.base_model.num_features, out)
+            self.output_heads.append(head)
+
+    def forward(self, x):
+        x = self.base_model.forward_features(x)
+        outputs = []
+        for output in self.output_heads:
+            outputs.append(output(x))
+        if len(outputs) > 1:
+            return outputs
+        else:
+            return outputs[0]
 
 
 @gin.configurable
@@ -251,7 +281,7 @@ class ResNet(nn.Module):
         x = self.features(x)
         outputs = []
         for top in self.predictions:
-            outputs.append(self.predictions(x))
+            outputs.append(top(x))
         if len(outputs) > 1:
             return outputs
         else:

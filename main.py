@@ -86,7 +86,7 @@ def main(argv):
     exp_id = ''
 
     if use_neptune:
-        neptune.init(project_qualified_name='bbeatrix/curl')
+        neptune.init(project_qualified_name='csadrian/clat')
         exp = neptune.create_experiment(params=gin_config_to_dict(gin.config_str()),
                                         name=FLAGS.gin_file[0].split('/')[-1][:-4],
                                         upload_source_files=['./*.py'])
