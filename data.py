@@ -10,7 +10,7 @@ from utils import rotate_image
 
 @gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
-    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised']
+    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised', 'supervised multihead']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=True):
@@ -205,6 +205,19 @@ class Data:
                 aux_images = torch.Tensor(np.array(aux_images))
                 aux_targets = torch.LongTensor(np.array(aux_targets))
                 return (images, targets, aux_images, aux_targets)
+        elif self.target_type == 'supervised multihead':
+            print('Multihead setup, using different output head for each task.')
+            num_concurrent_classes = self.num_classes // self.num_tasks
+            self.num_classes = (num_concurrent_classes, ) * self.num_tasks
+
+            def _collate_func(batch):
+                batch = default_collate(batch)
+                err_message = "A batch must contain two tensors: images, labels."
+                assert len(batch) == 2, err_message
+
+                images, targets = np.asarray(batch[0]), np.asarray(batch[1])
+                new_targets = targets % num_concurrent_classes
+                return (torch.Tensor(images), torch.LongTensor(new_targets))
         else:
             self.num_classes = (self.num_classes,)
             _collate_func = default_collate

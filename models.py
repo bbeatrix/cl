@@ -52,6 +52,8 @@ class VisualTransformer(nn.Module):
     def __init__(self, input_shape, output_shape, *args, **kwargs):
         super().__init__()
         self.base_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=0)
+        for param in self.base_model.parameters():
+            param.requires_grad = False
         self.output_heads = nn.ModuleList()
         for out in output_shape:
             head = nn.Linear(self.base_model.num_features, out)
@@ -62,11 +64,7 @@ class VisualTransformer(nn.Module):
         outputs = []
         for output in self.output_heads:
             outputs.append(output(x))
-        if len(outputs) > 1:
-            return outputs
-        else:
-            return outputs[0]
-
+        return outputs
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):

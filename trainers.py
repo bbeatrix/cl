@@ -13,15 +13,17 @@ from utils import save_image
 def trainer_maker(target_type, *args):
     if target_type == 'auxiliary selfsupervised':
         return SupervisedWithAuxTrainer(*args)
+    elif target_type == 'supervised multihead':
+        return SupervisedTrainer(*args, multihead=True)
     else:
-        return SupervisedTrainer(*args)
+        return SupervisedTrainer(*args, multihead=False)
 
 
 @gin.configurable(denylist=['device', 'model', 'batch_size', 'num_tasks', 'num_cycles',
-                            'data_loaders', 'logdir'])
+                            'data_loaders', 'logdir', 'multihead'])
 class Trainer:
     def __init__(self, device, model, batch_size, num_tasks, num_cycles, data_loaders, logdir,
-                 log_interval=100, iters=1000, lr=0.1, lr_warmup_steps=500, wd=5e-4,
+                 multihead, log_interval=100, iters=1000, lr=0.1, lr_warmup_steps=500, wd=5e-4,
                  optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR):
         self.device = device
         self.model = model
@@ -32,7 +34,7 @@ class Trainer:
         self.test_loaders = data_loaders['test_loaders']
         self.log_interval = log_interval
         self.iters = iters
-
+        self.multihead = multihead
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -52,10 +54,10 @@ class SupervisedTrainer(Trainer):
     def __init__(self, *args):
         super().__init__(*args)
 
-    def test_on_batch(self, input_images, target):
+    def test_on_batch(self, input_images, target, output_index):
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        model_output = self.model(input_images)
+        model_output = self.model(input_images)[output_index]
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
         predictions = torch.argmax(model_output, dim=1)
@@ -64,9 +66,9 @@ class SupervisedTrainer(Trainer):
                    'accuracy': accuracy}
         return results
 
-    def train_on_batch(self, batch):
+    def train_on_batch(self, batch, output_index=0):
         self.optimizer.zero_grad()
-        results = self.test_on_batch(*batch)
+        results = self.test_on_batch(*batch, output_index)
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
@@ -90,8 +92,10 @@ class SupervisedTrainer(Trainer):
                 except StopIteration:
                     current_train_loader_iterator = iter(current_train_loader)
                     batch = next(current_train_loader_iterator)
-
-                batch_results = self.train_on_batch(batch)
+                if self.multihead:
+                    batch_results = self.train_on_batch(batch, self.current_task % self.num_tasks)
+                else:
+                    batch_results = self.train_on_batch(batch)
 
                 if results_to_log is None:
                     results_to_log = batch_results.copy()
