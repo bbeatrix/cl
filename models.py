@@ -24,8 +24,6 @@ class Model:
     def build(self):
         self.model = self.model_class(self.input_shape, self.output_shape)
         self.model.to(self.device)
-        #if len(torch.cuda.device_count()) > 1:
-        #    model = torch.nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
 
         print("Model summary:\n")
         summary(self.model, self.input_shape)
@@ -45,10 +43,10 @@ class Model:
 
 @gin.configurable
 def vit_pretrained(input_shape, output_shape):
-    return VisualTransformer(input_shape, output_shape)
+    return VisionTransformer(input_shape, output_shape)
 
 
-class VisualTransformer(nn.Module):
+class VisionTransformer(nn.Module):
     def __init__(self, input_shape, output_shape, *args, **kwargs):
         super().__init__()
         self.base_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=0)

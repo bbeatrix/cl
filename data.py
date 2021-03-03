@@ -136,10 +136,10 @@ class Data:
         self.train_task_datasets, self.test_task_datasets = [], []
 
         if self.num_tasks > 1:
-            print("Splitting training dataset into {} parts for cl.".format(self.num_tasks))
-            print("The test set remains the original one for each task.")
-            targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
-            labels = np.unique(targets)
+            print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
+            train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
+            test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
+            labels = np.unique(train_targets)
 
             err_message = "Targets are assumed to be integers from 0 up to number of classes."
             assert set(labels) == set(range(self.num_classes)), err_message
@@ -151,13 +151,17 @@ class Data:
             for i in range(0, self.num_classes, num_concurrent_labels):
                 concurrent_labels = labels[i: i + num_concurrent_labels]
 
-                filtered_indices = np.where(np.isin(targets, concurrent_labels))[0]
+                trainset_filtered_indices = np.where(np.isin(train_targets, concurrent_labels))[0]
+                testset_filtered_indices = np.where(np.isin(test_targets, concurrent_labels))[0]
                 train_ds_subset = torch.utils.data.Subset(self.train_dataset,
-                                                          filtered_indices)
+                                                          trainset_filtered_indices)
+                test_ds_subset = torch.utils.data.Subset(self.test_dataset,
+                                                         testset_filtered_indices)
                 self.train_task_datasets.append(train_ds_subset)
+                self.test_task_datasets.append(test_ds_subset)
         else:
             self.train_task_datasets = [self.train_dataset]
-        self.test_task_datasets = [self.test_dataset] * self.num_tasks
+            self.test_task_datasets = [self.test_dataset]
 
         err_message = "Number of train datasets and the number of test datasets should be equal."
         assert len(self.train_task_datasets) == len(self.test_task_datasets), err_message

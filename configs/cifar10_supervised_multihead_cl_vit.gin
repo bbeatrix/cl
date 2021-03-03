@@ -1,6 +1,6 @@
 ExperimentManager.seed = 1
 
-Data.target_type = 'supervised'
+Data.target_type = 'supervised multihead'
 Data.image_size = 224
 Data.batch_size = 32
 Data.augment = True
@@ -9,7 +9,7 @@ Data.num_cycles = 1
 
 Model.model_class = @models.vit_pretrained
 
-Trainer.iters = 10000
+Trainer.iters = 5000
 Trainer.lr = 0.03
 Trainer.wd = 0.0
 Trainer.optimizer = @torch.optim.SGD
