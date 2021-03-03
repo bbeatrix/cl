@@ -14,15 +14,23 @@ import torchvision as tv
 
 @gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
 class Model:
-    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED):
+    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
+                 pretrained=True, freeze_base=False, freeze_top=False):
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape
         self.model_path = model_path
         self.model_class = model_class
+        self.pretrained = pretrained
+        self.freeze_base = freeze_base
+        self.freeze_top = freeze_top
 
     def build(self):
-        self.model = self.model_class(self.input_shape, self.output_shape)
+        self.model = self.model_class(self.input_shape,
+                                      self.output_shape,
+                                      self.pretrained,
+                                      self.freeze_base,
+                                      self.freeze_top)
         self.model.to(self.device)
 
         print("Model summary:\n")
@@ -42,20 +50,25 @@ class Model:
 
 
 @gin.configurable
-def vit_pretrained(input_shape, output_shape):
-    return VisionTransformer(input_shape, output_shape)
+def vit_pretrained(input_shape, output_shape, *args, **kwargs):
+    return VisionTransformer(input_shape, output_shape, *args, **kwargs)
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, input_shape, output_shape, *args, **kwargs):
+    def __init__(self, input_shape, output_shape, pretrained, freeze_base, freeze_top, *args, **kwargs):
         super().__init__()
-        self.base_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=0)
-        for param in self.base_model.parameters():
-            param.requires_grad = False
+        self.base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained, num_classes=0)
         self.output_heads = nn.ModuleList()
         for out in output_shape:
             head = nn.Linear(self.base_model.num_features, out)
             self.output_heads.append(head)
+        if freeze_base:
+            for param in self.base_model.parameters():
+                param.requires_grad = False
+        if freeze_top:
+            for param in self.output_heads.parameters():
+                param.requires_grad = False
+
 
     def forward(self, x):
         x = self.base_model.forward_features(x)
@@ -63,6 +76,7 @@ class VisionTransformer(nn.Module):
         for output in self.output_heads:
             outputs.append(output(x))
         return outputs
+
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):
