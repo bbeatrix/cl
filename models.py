@@ -69,6 +69,8 @@ class VisionTransformer(nn.Module):
             for param in self.output_heads.parameters():
                 param.requires_grad = False
 
+    def forward_features(self, x):
+        return self.base_model.forward_features(x)
 
     def forward(self, x):
         x = self.base_model.forward_features(x)

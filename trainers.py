@@ -15,27 +15,28 @@ def trainer_maker(target_type, *args):
     if target_type == 'auxiliary selfsupervised':
         return SupervisedWithAuxTrainer(*args)
     elif target_type == 'supervised multihead':
-        return SupervisedTrainer(*(*args, True))
+        return SupervisedTrainer(*args, multihead=True)
     else:
-        return SupervisedTrainer(*(*args, False))
+        return SupervisedTrainer(*args, multihead=False)
 
 
-@gin.configurable(denylist=['device', 'model', 'batch_size', 'num_tasks', 'num_cycles',
-                            'data_loaders', 'logdir', 'multihead'])
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir', 'multihead'])
 class Trainer:
-    def __init__(self, device, model, batch_size, num_tasks, num_cycles, data_loaders, logdir,
-                 multihead, log_interval=100, iters=1000, lr=0.1, lr_warmup_steps=500, wd=5e-4,
-                 optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR):
+    def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
+                 lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR,
+                 rehearsal=False):
         self.device = device
         self.model = model
-        self.batch_size = batch_size
-        self.num_tasks = num_tasks
-        self.num_cycles = num_cycles
-        self.train_loaders = data_loaders['train_loaders']
-        self.test_loaders = data_loaders['test_loaders']
+        self.data = data
+        self.batch_size = data.batch_size
+        self.num_tasks = data.num_tasks
+        self.num_cycles = data.num_cycles
+        self.train_loaders = data.loaders['train_loaders']
+        self.test_loaders = data.loaders['test_loaders']
         self.log_interval = log_interval
         self.iters = iters
         self.multihead = multihead
+        self.rehearsal = rehearsal
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -46,12 +47,16 @@ class Trainer:
                                        total_steps=self.iters)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
         self.logdir = logdir
-        print(f'\nmultihead: {self.multihead}\n')
 
 
 class SupervisedTrainer(Trainer):
-    def __init__(self, *args):
-        super().__init__(*args)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.rehearsal:
+            print('Rehearsal is on.')
+            self.num_anchor_img_per_task = 5
+            self.anchor_images = None
+            self.emb_dist_matrix = np.array([])
 
     def test_on_batch(self, input_images, target, output_index=0):
         input_images = input_images.to(self.device)
@@ -59,6 +64,12 @@ class SupervisedTrainer(Trainer):
         model_output = self.model(input_images)[output_index]
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
+        if self.rehearsal and self.anchor_images is not None:
+            current_emb_dist_matrix = self.calc_emb_dist_matrix()
+            row = np.random.choice(current_emb_dist_matrix.shape[0], 1, replace=False)
+            column = np.random.choice(current_emb_dist_matrix.shape[1], 1, replace=False)
+            diff = self.emb_dist_matrix[row, column] - current_emb_dist_matrix[row, column]
+            loss_mean += np.mean((diff)**2)
         predictions = torch.argmax(model_output, dim=1)
         accuracy = torch.mean(torch.eq(predictions, target).float())
         results = {'total_loss_mean': loss_mean,
@@ -132,6 +143,11 @@ class SupervisedTrainer(Trainer):
                     results_to_log = None
                     self.test()
 
+            if self.rehearsal and self.current_task < self.num_tasks:
+                self.retain_anchor_images()
+                self.emb_dist_matrix = self.calc_emb_dist_matrix()
+
+
     def test(self):
         with torch.no_grad():
             for idx, current_test_loader in enumerate(self.test_loaders):
@@ -162,6 +178,28 @@ class SupervisedTrainer(Trainer):
 
                 for metric, result in test_results.items():
                     neptune.send_metric(metric, x=self.global_iters, y=result)
+
+
+    def retain_anchor_images(self):
+        current_train_loader_iterator = iter(self.train_loaders[self.current_task])
+        c = self.data.num_classes[0] // self.num_tasks
+        current_labels = self.data.labels[c * self.current_task : c * (self.current_task + 1)]
+
+        task_ds = self.data.train_task_datasets[self.current_task]
+        task_targets = [task_ds[i][1] for i in range(len(task_ds))]
+        filtered_indices = np.where(np.isin(task_targets, current_labels))[0]
+        selected_indices = filtered_indices[:self.num_anchor_img_per_task]
+        new_anchor_imgs = torch.stack([task_ds[i][0] for i in selected_indices], 0).to(self.device)
+        if self.anchor_images is None:
+            self.anchor_images = new_anchor_imgs
+        else:
+            self.anchor_images = torch.cat((self.anchor_images, new_anchor_imgs), 0)
+
+
+    def calc_emb_dist_matrix(self):
+        with torch.no_grad():
+            features = self.model.forward_features(self.anchor_images).detach().cpu().numpy()
+        return np.matmul(features, np.transpose(features))
 
 
 class SupervisedWithAuxTrainer(SupervisedTrainer):

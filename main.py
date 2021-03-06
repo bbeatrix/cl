@@ -68,10 +68,7 @@ class ExperimentManager():
         self.trainer = trainers.trainer_maker(self.data.target_type,
                                               self.device,
                                               self.model.build(),
-                                              self.data.batch_size,
-                                              self.data.num_tasks,
-                                              self.data.num_cycles,
-                                              self.data.loaders,
+                                              self.data,
                                               self.logdir)
 
     def run_experiment(self):

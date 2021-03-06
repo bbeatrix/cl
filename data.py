@@ -139,17 +139,17 @@ class Data:
             print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
-            labels = np.unique(train_targets)
+            self.labels = np.unique(train_targets)
 
             err_message = "Targets are assumed to be integers from 0 up to number of classes."
-            assert set(labels) == set(range(self.num_classes)), err_message
+            assert set(self.labels) == set(range(self.num_classes)), err_message
             err_message =  "Number of classes should be divisible by the number of tasks."
             assert self.num_classes % self.num_tasks == 0, err_message
 
             num_concurrent_labels = self.num_classes // self.num_tasks
 
             for i in range(0, self.num_classes, num_concurrent_labels):
-                concurrent_labels = labels[i: i + num_concurrent_labels]
+                concurrent_labels = self.labels[i: i + num_concurrent_labels]
 
                 trainset_filtered_indices = np.where(np.isin(train_targets, concurrent_labels))[0]
                 testset_filtered_indices = np.where(np.isin(test_targets, concurrent_labels))[0]
