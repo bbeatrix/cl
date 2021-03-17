@@ -7,7 +7,9 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR, OneCycleLR
 
+from losses import SupConLoss
 from utils import save_image
+
 
 
 def trainer_maker(target_type, *args):
@@ -24,7 +26,7 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR,
-                 rehearsal=False):
+                 rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False):
         self.device = device
         self.model = model
         self.data = data
@@ -37,6 +39,7 @@ class Trainer:
         self.iters = iters
         self.multihead = multihead
         self.rehearsal = rehearsal
+        self.use_prototypes = use_prototypes
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -45,7 +48,7 @@ class Trainer:
                                        max_lr=lr,
                                        pct_start=lr_warmup_steps / self.iters,
                                        total_steps=self.iters)
-        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        self.loss_function = loss(reduction='none')
         self.logdir = logdir
 
 
@@ -56,25 +59,52 @@ class SupervisedTrainer(Trainer):
             print('Rehearsal is on.')
             self.num_anchor_img_per_task = 5
             self.anchor_images = None
-            self.emb_dist_matrix = np.array([])
+            self.similarity_matrix = np.array([])
+        if self.use_prototypes:
+            self.class_prototypes = {}
+            for i in range(self.data.num_classes[0]):
+                self.class_prototypes[i] = torch.ones(self.data.num_classes[0],
+                                                      self.data.num_classes[0],
+                                                      requires_grad=False,
+                                                      device=self.device)
+
 
     def test_on_batch(self, input_images, target, output_index=0):
         input_images = input_images.to(self.device)
         target = target.to(self.device)
         model_output = self.model(input_images)[output_index]
+        if self.use_prototypes:
+            model_output = model_output.view(self.batch_size, 1, -1)
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
+
         if self.rehearsal and self.anchor_images is not None:
-            current_emb_dist_matrix = self.calc_emb_dist_matrix()
-            row = np.random.choice(current_emb_dist_matrix.shape[0], 1, replace=False)
-            column = np.random.choice(current_emb_dist_matrix.shape[1], 1, replace=False)
-            diff = self.emb_dist_matrix[row, column] - current_emb_dist_matrix[row, column]
+            print('Add rehearsal loss term.')
+            if self.use_prototypes:
+                current_prototypes = self.get_prototypes()
+                current_similarity_matrix = self.calc_similarity_matrix(current_prototypes)
+            else:
+                current_similarity_matrix = self.calc_similarity_matrix()
+
+            row = np.random.choice(current_similarity_matrix.shape[0], 1, replace=False)
+            column = np.random.choice(current_similarity_matrix.shape[1], 1, replace=False)
+            diff = self.similarity_matrix[row, column] - current_similarity_matrix[row, column]
             loss_mean += np.mean((diff)**2)
-        predictions = torch.argmax(model_output, dim=1)
+
+        if self.use_prototypes:
+            print('Predict with prototypes.')
+            model_output = model_output.view(self.batch_size, -1)
+            prototype_similarities = self.calc_similarity_matrix(a=model_output,
+                                                                 b=torch.cat(tuple(self.class_prototypes.values())))
+            predictions = torch.argmax(prototype_similarities, 1)
+        else:
+            predictions = torch.argmax(model_output, dim=1)
+
         accuracy = torch.mean(torch.eq(predictions, target).float())
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy}
         return results
+
 
     def train_on_batch(self, batch, output_index=0):
         self.optimizer.zero_grad()
@@ -83,6 +113,7 @@ class SupervisedTrainer(Trainer):
         self.optimizer.step()
         self.lr_scheduler.step()
         return results
+
 
     def train(self):
         self.global_iters = 0
@@ -145,7 +176,10 @@ class SupervisedTrainer(Trainer):
 
             if self.rehearsal and self.current_task < self.num_tasks:
                 self.retain_anchor_images()
-                self.emb_dist_matrix = self.calc_emb_dist_matrix()
+                if self.use_rehearsal:
+                    self.similarity_matrix = self.calc_similarity_matrix(a=torch.cat(tuple(self.class_prototypes.values())))
+                else:
+                    self.similarity_matrix = self.calc_similarity_matrix()
 
 
     def test(self):
@@ -181,25 +215,51 @@ class SupervisedTrainer(Trainer):
 
 
     def retain_anchor_images(self):
+        print('Retain anchor images.')
         current_train_loader_iterator = iter(self.train_loaders[self.current_task])
         c = self.data.num_classes[0] // self.num_tasks
         current_labels = self.data.labels[c * self.current_task : c * (self.current_task + 1)]
 
-        task_ds = self.data.train_task_datasets[self.current_task]
-        task_targets = [task_ds[i][1] for i in range(len(task_ds))]
-        filtered_indices = np.where(np.isin(task_targets, current_labels))[0]
-        selected_indices = filtered_indices[:self.num_anchor_img_per_task]
-        new_anchor_imgs = torch.stack([task_ds[i][0] for i in selected_indices], 0).to(self.device)
-        if self.anchor_images is None:
-            self.anchor_images = new_anchor_imgs
-        else:
-            self.anchor_images = torch.cat((self.anchor_images, new_anchor_imgs), 0)
+        for label in current_labels:
+            task_ds = self.data.train_task_datasets[self.current_task]
+            task_targets = [task_ds[i][1] for i in range(len(task_ds))]
+            filtered_indices = np.where(np.isin(task_targets, label))[0]
+            selected_indices = filtered_indices[:self.num_anchor_img_per_class]
+            new_anchor_imgs = torch.stack([task_ds[i][0] for i in selected_indices], 0).to(self.device)
+            if self.anchor_images is None:
+                self.anchor_images = {label: new_anchor_imgs}
+            else:
+                self.anchor_images[label] = new_anchor_imgs
+            if self.use_prototypes:
+                with torch.no_grad():
+                    features = self.model.forward(new_anchor_imgs).detach()#.cpu().numpy()
+                    self.class_prototypes[label] = torch.mean(features, dim=0)
 
 
-    def calc_emb_dist_matrix(self):
+    def calc_similarity_matrix(self, a=None, b=None, eps=1e-9):
+        print('Calculate similarity matrix.')
+        if a is None:
+            with torch.no_grad():
+                images = torch.cat(list(self.anchor_images.values()))
+                a = self.model(images).detach()#.cpu()#.numpy()
+        if b is None:
+            b = a
+        #cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+        a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
+        a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
+        b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
+        cos_sim = torch.mm(a_norm, b_norm.transpose(0, 1))
+        return cos_sim
+
+
+    def get_current_prototypes(self):
+        print('Get current prototypes.')
+        prototypes = {}
         with torch.no_grad():
-            features = self.model.forward_features(self.anchor_images).detach().cpu().numpy()
-        return np.matmul(features, np.transpose(features))
+            for label, images in self.anchor_images.items():
+                features = self.model.forward(images).detach()#.cpu().numpy()
+                prototypes[label] = torch.mean(features, dim=0)
+        return prototypes
 
 
 class SupervisedWithAuxTrainer(SupervisedTrainer):
