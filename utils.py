@@ -6,6 +6,14 @@ import numpy as np
 import torchvision as tv
 
 
+class TwoCropTransform:
+    """Create two crops of the same image"""
+    def __init__(self, transform):
+        self.transform = transform
+
+    def __call__(self, x):
+        return [self.transform(x), self.transform(x)]
+
 def rotate_image(image_array, angle):
     if angle == 0:
         return image_array

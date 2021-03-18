@@ -5,12 +5,12 @@ import torch
 from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
 
-from utils import rotate_image
+from utils import rotate_image, TwoCropTransform
 
 
 @gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
-    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised', 'supervised multihead']
+    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised', 'supervised multihead', 'supervised contrastive']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=True):
@@ -97,13 +97,21 @@ class Data:
             self.input_shape, self.num_classes = (3, 32, 32), 10
 
             image_transforms = [tfs.ToTensor(),
-                                tfs.Normalize(mean=[0.507, 0.487, 0.441],
-                                              std=[0.267, 0.256, 0.276])]
+                                tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                                              std=[0.2023, 0.1994, 0.2010]]
             augment_transforms = []
 
             if self.augment:
                 print("Using augmentation on train dataset.")
-                if self.apply_vit_transforms is True:
+                if self.target_type == 'supervised contrastive':
+                    augment_transforms = [
+                        transforms.RandomResizedCrop(size=self.image_size, scale=(0.2, 1.)),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                                               p=0.8),
+                        transforms.RandomGrayscale(p=0.2),
+                    ]
+                elif self.apply_vit_transforms is True:
                     self.input_shape = (3, self.image_size, self.image_size)
 
                     augment_transforms = [tfs.Resize(self.image_size),
@@ -119,6 +127,8 @@ class Data:
                                           tfs.RandomHorizontalFlip()]
 
             train_transforms = tfs.Compose(augment_transforms + image_transforms)
+            if self.target_type == 'supervised cotrastive':
+                train_transforms = TwoCropTransform(train_transforms)
             test_transforms = tfs.Compose(image_transforms)
 
             self.train_dataset = datasets.CIFAR10(self.datadir,
