@@ -70,12 +70,18 @@ class SupervisedTrainer(Trainer):
 
 
     def test_on_batch(self, input_images, target, output_index=0):
-        input_images = input_images.to(self.device)
+        input_images_doubled = torch.cat([input_images[0], input_images[1]], dim=0)
+        input_images_doubled = input_images_doubled.to(self.device)
+        input_images = input_images[0].to(self.device)
+
         target = target.to(self.device)
+
         model_output = self.model(input_images)[output_index]
-        if self.use_prototypes:
-            model_output = model_output.view(self.batch_size, 1, -1)
-        loss_per_sample = self.loss_function(model_output, target)
+        model_output_doubled = self.model(input_images_doubled)[output_index]
+        f1, f2 = torch.split(model_output_doubled, [self.batch_size, self.batch_size], dim=0)
+        model_output_splitted = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+
+        loss_per_sample = self.loss_function(model_output_splitted, target)
         loss_mean = torch.mean(loss_per_sample)
 
         if self.rehearsal and self.anchor_images is not None:
@@ -92,8 +98,8 @@ class SupervisedTrainer(Trainer):
             loss_mean += np.mean((diff)**2)
 
         if self.use_prototypes:
-            print('Predict with prototypes.')
-            model_output = model_output.view(self.batch_size, -1)
+            #print('Predict with prototypes.')
+            #model_output = model_output.view(self.batch_size, -1)
             prototype_similarities = self.calc_similarity_matrix(a=model_output,
                                                                  b=torch.cat(tuple(self.class_prototypes.values())))
             predictions = torch.argmax(prototype_similarities, 1)
@@ -233,18 +239,18 @@ class SupervisedTrainer(Trainer):
             if self.use_prototypes:
                 with torch.no_grad():
                     features = self.model.forward(new_anchor_imgs).detach()#.cpu().numpy()
-                    self.class_prototypes[label] = torch.mean(features, dim=0)
-
+                    self.class_prototypes[label] = torch.mean(features, dim=0)#np.mean(features, axis=0)#
 
     def calc_similarity_matrix(self, a=None, b=None, eps=1e-9):
-        print('Calculate similarity matrix.')
+        #print('Calculate similarity matrix.')
         if a is None:
             with torch.no_grad():
                 images = torch.cat(list(self.anchor_images.values()))
-                a = self.model(images).detach()#.cpu()#.numpy()
+                a = self.model(images).detach()#.cpu().numpy()
         if b is None:
             b = a
         #cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+        #print('Sizes: ', a.size(), b.size())
         a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
         a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
         b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
@@ -258,7 +264,7 @@ class SupervisedTrainer(Trainer):
         with torch.no_grad():
             for label, images in self.anchor_images.items():
                 features = self.model.forward(images).detach()#.cpu().numpy()
-                prototypes[label] = torch.mean(features, dim=0)
+                prototypes[label] = torch.mean(features, dim=0)# np.mean(features, axis=0)
         return prototypes
 
 

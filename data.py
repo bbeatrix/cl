@@ -98,19 +98,22 @@ class Data:
 
             image_transforms = [tfs.ToTensor(),
                                 tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
-                                              std=[0.2023, 0.1994, 0.2010]]
+                                              std=[0.2023, 0.1994, 0.2010])]
             augment_transforms = []
 
             if self.augment:
                 print("Using augmentation on train dataset.")
                 if self.target_type == 'supervised contrastive':
+                    self.input_shape = (3, self.image_size, self.image_size)
+
                     augment_transforms = [
-                        transforms.RandomResizedCrop(size=self.image_size, scale=(0.2, 1.)),
-                        transforms.RandomHorizontalFlip(),
-                        transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                        tfs.RandomResizedCrop(size=self.image_size, scale=(0.2, 1.)),
+                        tfs.RandomHorizontalFlip(),
+                        tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
                                                p=0.8),
-                        transforms.RandomGrayscale(p=0.2),
+                        tfs.RandomGrayscale(p=0.2),
                     ]
+                    image_transforms.insert(0, tfs.Resize(self.image_size))
                 elif self.apply_vit_transforms is True:
                     self.input_shape = (3, self.image_size, self.image_size)
 
@@ -127,9 +130,11 @@ class Data:
                                           tfs.RandomHorizontalFlip()]
 
             train_transforms = tfs.Compose(augment_transforms + image_transforms)
-            if self.target_type == 'supervised cotrastive':
-                train_transforms = TwoCropTransform(train_transforms)
             test_transforms = tfs.Compose(image_transforms)
+            if self.target_type == 'supervised contrastive':
+                print('Apply two crop transform for contrastive learning.')
+                train_transforms = TwoCropTransform(train_transforms)
+                test_transforms = TwoCropTransform(test_transforms)
 
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,
