@@ -13,7 +13,8 @@ class Data:
     TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised', 'supervised multihead', 'supervised contrastive']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
-                 target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=True):
+                 target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=False,
+                 emb_dim=128):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         self.datadir = datadir
@@ -26,6 +27,7 @@ class Data:
         self.num_tasks = num_tasks
         self.num_cycles = num_cycles
         self.apply_vit_transforms = apply_vit_transforms
+        self.emb_dim = emb_dim
 
         self._setup()
 
@@ -151,6 +153,8 @@ class Data:
         self.train_task_datasets, self.test_task_datasets = [], []
 
         if self.num_tasks > 1:
+            #import time
+            #T0 = time.time()
             print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
@@ -174,7 +178,11 @@ class Data:
                                                          testset_filtered_indices)
                 self.train_task_datasets.append(train_ds_subset)
                 self.test_task_datasets.append(test_ds_subset)
+            #T1 = time.time()
+            #print(f"Splitting the dataset takes \t{T1-T0} sec")
+            #exit()
         else:
+            self.labels = np.array([i for i in range(self.num_classes)])
             self.train_task_datasets = [self.train_dataset]
             self.test_task_datasets = [self.test_dataset]
 

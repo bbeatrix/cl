@@ -32,6 +32,10 @@ class SupConLoss(nn.Module):
         Returns:
             A loss scalar.
         """
+        #print('IN: SupConLoss\n')
+        #print('features: ', features.size(), features)
+        #print('targets: ', labels.size(), labels)
+        #print('mask: ', mask)
         device = (torch.device('cuda') if features.is_cuda else torch.device('cpu'))
 
         if len(features.shape) < 3:
@@ -68,9 +72,12 @@ class SupConLoss(nn.Module):
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
             self.temperature)
+        #print('anchor dot contrast: ', anchor_dot_contrast)
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
+
+        #print('logits: ', logits)
 
         # tile mask
         mask = mask.repeat(anchor_count, contrast_count)
@@ -87,12 +94,16 @@ class SupConLoss(nn.Module):
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
 
+        #print('exp_logits: ', exp_logits)
+        #print('log_prob: ', log_prob)
         # compute mean of log-likelihood over positive
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
+
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size)
+        #print('Calculated loss: ', loss)
         if self.reduction == 'mean':
             loss = loss.mean()
         elif self.reduction == 'sum':

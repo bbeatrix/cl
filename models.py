@@ -15,7 +15,7 @@ import torchvision as tv
 @gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
 class Model:
     def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
-                 pretrained=True, freeze_base=False, freeze_top=False):
+                 pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape
@@ -24,10 +24,16 @@ class Model:
         self.pretrained = pretrained
         self.freeze_base = freeze_base
         self.freeze_top = freeze_top
+        self.emb_dim = emb_dim
+        self.use_classifier_head = use_classifier_head
+        if self.use_classifier_head is False:
+            assert self.emb_dim is not None, "Embedding dim must be specified if classifier head is not used."
 
     def build(self):
         self.model = self.model_class(self.input_shape,
                                       self.output_shape,
+                                      self.emb_dim,
+                                      self.use_classifier_head,
                                       self.pretrained,
                                       self.freeze_base,
                                       self.freeze_top)
@@ -55,30 +61,54 @@ def vit_pretrained(input_shape, output_shape, *args, **kwargs):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, input_shape, output_shape, pretrained, freeze_base, freeze_top, *args, **kwargs):
+    def __init__(self, input_shape, output_shape, emb_dim, use_classifier_head, pretrained, freeze_base,
+                 freeze_top, *args, **kwargs):
         super().__init__()
         self.base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained, num_classes=0)
-        self.output_heads = nn.ModuleList()
-        for out in output_shape:
-            head = nn.Linear(self.base_model.num_features, out)
-            self.output_heads.append(head)
+        if emb_dim is not None:
+            print('Add extra embedding layer.')
+            self.emb = nn.Linear(self.base_model.num_feature, emb_dim)
+            feat_dim = emb_dim
+        else:
+            self.emb = nn.Identity()
+            feat_dim = self.base_model.num_feature
+
         if freeze_base:
             for param in self.base_model.parameters():
                 param.requires_grad = False
-        if freeze_top:
-            for param in self.output_heads.parameters():
-                param.requires_grad = False
 
-    def forward_features(self, x):
-        return self.base_model.forward_features(x)
+        self.use_classifier_head = use_classifier_head
+        if self.use_classifier_head is True:
+            self.output_heads = nn.ModuleList()
+            for out in output_shape:
+                head = nn.Linear(feat_dim, out)
+                self.output_heads.append(head)
+            if freeze_top:
+                for param in self.output_heads.parameters():
+                    param.requires_grad = False
 
     def forward(self, x):
         x = self.base_model.forward_features(x)
-        outputs = []
-        for output in self.output_heads:
-            outputs.append(output(x))
-        return outputs
+        x = self.emb(x)
+        x = F.normalize(x, dim=1)
+        if self.use_classifier_head is True:
+            outputs = []
+            for output in self.output_heads:
+                outputs.append(output(x))
+            return outputs
+        else:
+            return list(x)
 
+
+@gin.configurable
+def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
+    #return ResNet(input_shape, output_shape, block=ResNetBottleNeckBlock, depths=[3, 4, 6, 3])
+    return ResNet(input_shape,
+                  output_shape,
+                  emb_dim,
+                  use_classifier_head,
+                  block=ResNetBasicBlock,
+                  depths=[2, 2, 2, 2])
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):
@@ -259,45 +289,59 @@ class ResNetFeatures(nn.Module):
             following_layers.append(next_layer)
 
         self.blocks = nn.ModuleList([first_layer, *following_layers])
+        self.avg = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
         x = self.gate(x)
         for block in self.blocks:
             x = block(x)
+        x = self.avg(x)
+        x = x.view(x.size(0), -1)
         return x
 
 
 class ResnetTop(nn.Module):
     def __init__(self, in_features, n_classes):
         super().__init__()
-        self.avg = nn.AdaptiveAvgPool2d((1, 1))
         self.output = nn.Linear(in_features, n_classes)
 
     def forward(self, x):
-        x = self.avg(x)
-        x = x.view(x.size(0), -1)
         out = self.output(x)
         return out
 
 
 class ResNet(nn.Module):
-    def __init__(self, input_shape, output_shape, *args, **kwargs):
+    def __init__(self, input_shape, output_shape, emb_dim, use_classifier_head, *args, **kwargs):
         super().__init__()
         self.features = ResNetFeatures(input_shape[0], *args, **kwargs)
-        self.predictions = nn.ModuleList()
-        for out in output_shapes:
-            new_top = ResnetTop(self.features.blocks[-1].blocks[-1].expanded_channels, out)
-            self.predictions.append(new_top)
+        if emb_dim is not None:
+            print('Add extra embedding layer.')
+            self.emb = nn.Linear(self.features.blocks[-1].blocks[-1].expanded_channels, emb_dim)
+            feat_dim = emb_dim
+        else:
+            self.emb = nn.Identity()
+            feat_dim = self.features.blocks[-1].blocks[-1].expanded_channels
+        self.use_classifier_head = use_classifier_head
+        if self.use_classifier_head is True:
+            self.predictions = nn.ModuleList()
+            for out in output_shape:
+                new_top = ResnetTop(feat_dim, out)
+                self.predictions.append(new_top)
+            self.output_shape = output_shape
+        else:
+            self.output_shape = (feat_dim, ) * len(output_shape)
 
     def forward(self, x):
-        x = self.features(x)
-        outputs = []
-        for top in self.predictions:
-            outputs.append(top(x))
-        if len(outputs) > 1:
+        x = self.emb(self.features(x))
+        x = F.normalize(x, dim=1)
+        if self.use_classifier_head:
+            outputs = []
+            for top in self.predictions:
+                outputs.append(top(x))
             return outputs
         else:
-            return outputs[0]
+            return [x] * len(self.output_shape)
+
 
 class NovelResNet(nn.Module):
     """
