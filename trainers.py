@@ -26,7 +26,7 @@ def trainer_maker(target_type, *args):
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir', 'multihead'])
 class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
-                 lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler=OneCycleLR,
+                 lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
                  rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False):
         self.device = device
         self.model = model
@@ -44,11 +44,16 @@ class Trainer:
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
+        if lr_scheduler == 'OneCycleLR':
+            self.lr_scheduler = OneCycleLR(self.optimizer,
+                                           max_lr=lr,
+                                           pct_start=lr_warmup_steps / self.iters,
+                                           total_steps=self.iters)
+        else:
+            self.lr_scheduler = MultiStepLR(self.optimizer,
+                                            milestones=[],
+                                            gamma=0.1)
 
-        self.lr_scheduler = OneCycleLR(self.optimizer,
-                                       max_lr=lr,
-                                       pct_start=lr_warmup_steps / self.iters,
-                                       total_steps=self.iters)
         self.loss_function = loss(reduction='none')
         self.logdir = logdir
 
@@ -58,7 +63,7 @@ class SupervisedTrainer(Trainer):
         super().__init__(*args, **kwargs)
         if self.rehearsal:
             print('Rehearsal is on.')
-            self.similarity_matrix = np.array([])
+            self.similarity_matrix = None
         if self.use_prototypes:
             print('Use prototypes.')
             self.num_anchor_img_per_class = 10
@@ -67,8 +72,8 @@ class SupervisedTrainer(Trainer):
             self.class_prototypes = {}
             for i in range(self.data.num_classes[0]):
                 all_zeros = torch.zeros(self.model.output_shape[0],
-                                       requires_grad=False,
-                                       device=self.device)
+                                        requires_grad=False,
+                                        device=self.device)
                 all_zeros[i] = 1
                 self.class_prototypes[i] = all_zeros
 
@@ -87,18 +92,24 @@ class SupervisedTrainer(Trainer):
         loss_per_sample = self.loss_function(model_output_splitted, target)
         loss_mean = torch.mean(loss_per_sample)
 
-        if self.rehearsal and self.anchor_images is not None:
+        if self.rehearsal and self.similarity_matrix is not None:
             print('Add rehearsal loss term.')
             if self.use_prototypes:
                 current_prototypes = self.get_current_prototypes()
-                current_similarity_matrix = self.calc_similarity_matrix(current_prototypes)
+                prototypes = torch.stack(tuple(current_prototypes.values()), dim=0)
+                current_similarity_matrix = self.calc_similarity_matrix(prototypes)
+                size = self.similarity_matrix.size(0)
+                current_similarity_matrix = current_similarity_matrix[:size, :size]
             #else:
             #    current_similarity_matrix = self.calc_similarity_matrix()
 
             row = np.random.choice(current_similarity_matrix.shape[0], 1, replace=False)
             column = np.random.choice(current_similarity_matrix.shape[1], 1, replace=False)
             diff = self.similarity_matrix[row, column] - current_similarity_matrix[row, column]
-            loss_mean += np.mean((diff)**2)
+            #loss_mean += torch.mean(diff).squeeze(0)**2
+            rehearsal_loss_mean = torch.mean(self.similarity_matrix - current_similarity_matrix).squeeze()**2
+            print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {rehearsal_loss_mean}')
+            loss_mean += rehearsal_loss_mean
 
         if self.use_prototypes:
             class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
@@ -188,7 +199,7 @@ class SupervisedTrainer(Trainer):
                         self.class_prototypes = self.get_current_prototypes()
 
             if self.rehearsal and self.current_task < self.num_tasks:
-                if self.use_rehearsal:
+                if self.use_prototypes:
                     class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
                     self.similarity_matrix = self.calc_similarity_matrix(a=class_prototypes)
                 else:
