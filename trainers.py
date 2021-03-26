@@ -27,7 +27,8 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
-                 rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, num_anchor_img_per_class=0):
+                 rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, rehearsal_weight=1,
+                 num_anchor_img_per_class=0):
         self.device = device
         self.model = model
         self.data = data
@@ -57,7 +58,7 @@ class Trainer:
         self.loss_function = loss(reduction='none')
         self.logdir = logdir
         self.num_anchor_img_per_class = num_anchor_img_per_class
-
+        self.rehearsal_weight = rehearsal_weight
 
 class SupervisedTrainer(Trainer):
     def __init__(self, *args, **kwargs):
@@ -114,7 +115,7 @@ class SupervisedTrainer(Trainer):
             diff = self.similarity_matrix[row, column] - current_similarity_matrix[row, column]
             rehearsal_loss_mean = torch.mean(self.similarity_matrix - current_similarity_matrix).squeeze()**2
             print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {rehearsal_loss_mean}')
-            loss_mean += rehearsal_loss_mean
+            loss_mean += self.rehearsal_weight * rehearsal_loss_mean
 
         if self.use_prototypes:
             class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
