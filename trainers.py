@@ -27,7 +27,7 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
-                 rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False):
+                 rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, num_anchor_img_per_class=0):
         self.device = device
         self.model = model
         self.data = data
@@ -56,6 +56,7 @@ class Trainer:
 
         self.loss_function = loss(reduction='none')
         self.logdir = logdir
+        self.num_anchor_img_per_class = num_anchor_img_per_class
 
 
 class SupervisedTrainer(Trainer):
@@ -66,7 +67,7 @@ class SupervisedTrainer(Trainer):
             self.similarity_matrix = None
         if self.use_prototypes:
             print('Use prototypes.')
-            self.num_anchor_img_per_class = 10
+            #self.num_anchor_img_per_class = num_anchor_img_per_class
             print('Anchor images per class: ', self.num_anchor_img_per_class)
             self.anchor_images = None
             self.class_prototypes = {}
@@ -76,6 +77,10 @@ class SupervisedTrainer(Trainer):
                                         device=self.device)
                 all_zeros[i] = 1
                 self.class_prototypes[i] = all_zeros
+            self.prototype_labels = torch.tensor(range(self.data.num_classes[0]),
+                                                 requires_grad=False,
+                                                 device=self.device)
+
 
     def test_on_batch(self, input_images, target, output_index=0):
         input_images_doubled = torch.cat([input_images[0], input_images[1]], dim=0)
@@ -95,9 +100,10 @@ class SupervisedTrainer(Trainer):
         if self.rehearsal and self.similarity_matrix is not None:
             print('Add rehearsal loss term.')
             if self.use_prototypes:
-                current_prototypes = self.get_current_prototypes()
+                current_prototypes, _ = self.get_current_prototypes()
                 prototypes = torch.stack(tuple(current_prototypes.values()), dim=0)
-                current_similarity_matrix = self.calc_similarity_matrix(prototypes)
+                prototypes_reshaped = prototypes.view(-1, prototypes.size(-1))
+                current_similarity_matrix = self.calc_similarity_matrix(prototypes_reshaped)
                 size = self.similarity_matrix.size(0)
                 current_similarity_matrix = current_similarity_matrix[:size, :size]
             #else:
@@ -106,16 +112,17 @@ class SupervisedTrainer(Trainer):
             row = np.random.choice(current_similarity_matrix.shape[0], 1, replace=False)
             column = np.random.choice(current_similarity_matrix.shape[1], 1, replace=False)
             diff = self.similarity_matrix[row, column] - current_similarity_matrix[row, column]
-            #loss_mean += torch.mean(diff).squeeze(0)**2
             rehearsal_loss_mean = torch.mean(self.similarity_matrix - current_similarity_matrix).squeeze()**2
             print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {rehearsal_loss_mean}')
             loss_mean += rehearsal_loss_mean
 
         if self.use_prototypes:
             class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
+            class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
             prototype_similarities = self.calc_similarity_matrix(a=model_output,
-                                                                 b=class_prototypes)
-            predictions = torch.argmax(prototype_similarities, 1)
+                                                                 b=class_prototypes_reshaped)
+            prediction_indices = torch.argmax(prototype_similarities, 1)
+            predictions = self.prototype_labels[prediction_indices]
         else:
             predictions = torch.argmax(model_output, dim=1)
 
@@ -196,12 +203,13 @@ class SupervisedTrainer(Trainer):
                     self.test()
 
                     if self.use_prototypes:
-                        self.class_prototypes = self.get_current_prototypes()
+                        self.class_prototypes, self.prototype_labels = self.get_current_prototypes()
 
             if self.rehearsal and self.current_task < self.num_tasks:
                 if self.use_prototypes:
                     class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-                    self.similarity_matrix = self.calc_similarity_matrix(a=class_prototypes)
+                    class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
+                    self.similarity_matrix = self.calc_similarity_matrix(a=class_prototypes_reshaped)
                 else:
                     self.similarity_matrix = self.calc_similarity_matrix()
 
@@ -238,20 +246,9 @@ class SupervisedTrainer(Trainer):
                 for metric, result in test_results.items():
                     neptune.send_metric(metric, x=self.global_iters, y=result)
 
-    def get_indices_for_label(self, dataset, label, num_targets=None):
-        if type(dataset) == torchvision.datasets.cifar.CIFAR10:
-            targets = dataset.targets
-            filtered_indices = np.where(np.isin(targets, label))[0]
-            if num_targets is None:
-                num_targets = len(filtered_indices)
-            return filtered_indices[:num_targets]
-        else:
-            raise NotImplementedError('Target')
 
     def retain_anchor_images(self):
         print('Retain anchor images.')
-        #import time
-        #T0 = time.time()
         current_train_loader_iterator = iter(self.train_loaders[self.current_task])
         c = self.data.num_classes[0] // self.num_tasks
         current_labels = self.data.labels[c * self.current_task : c * (self.current_task + 1)]
@@ -263,7 +260,6 @@ class SupervisedTrainer(Trainer):
 
             task_targets = [task_ds[i][1] for i in range(len(task_ds))]
             filtered_indices = np.where(np.isin(task_targets, label))[0]
-            #selected_indices = self.get_indices_for_label(task_ds, label, self.num_anchor_img_per_class)
             selected_indices = filtered_indices[:self.num_anchor_img_per_class]
             selected_images = tuple([task_ds[i][0][0] for i in selected_indices])
             new_anchor_imgs = torch.stack(selected_images, 0).to(self.device)
@@ -271,16 +267,11 @@ class SupervisedTrainer(Trainer):
                 self.anchor_images = {label: new_anchor_imgs}
             else:
                 self.anchor_images[label] = new_anchor_imgs
-        #T1 = time.time()
-        #print(f'Retaining anchor images takes \t {T1-T0} sec')
-        #exit()
+
 
     def calc_similarity_matrix(self, a, b=None, eps=1e-9):
-        #print('Calculate similarity matrix.')
         if b is None:
             b = a
-        #cos_sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-        #print('Sizes: ', a.size(), b.size())
         a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
         a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
         b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
@@ -292,11 +283,14 @@ class SupervisedTrainer(Trainer):
         print('Get current prototypes.')
         self.model.eval()
         prototypes = {}
+        prototype_labels = []
         with torch.no_grad():
             for label, images in self.anchor_images.items():
-                features = self.model(images)[output_index].detach()#.cpu().numpy()
-                prototypes[label] = torch.mean(features, dim=0)# np.mean(features, axis=0)
-        return prototypes
+                features = self.model(images)[output_index].detach()
+                prototypes[label] = features
+                prototype_labels.extend([label]*len(features))
+        prototype_labels = torch.tensor(prototype_labels, requires_grad=False, device=self.device)
+        return prototypes, prototype_labels
 
 
 class SupervisedWithAuxTrainer(SupervisedTrainer):

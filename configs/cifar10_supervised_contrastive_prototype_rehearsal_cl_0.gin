@@ -16,6 +16,7 @@ Trainer.wd = 0.0
 Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100
 Trainer.rehearsal = True
+Trainer.num_anchor_img_per_class = 5
 Trainer.use_prototypes = True
 Trainer.loss = @losses.SupConLoss
 
