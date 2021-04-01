@@ -8,15 +8,15 @@ Data.num_tasks = 5
 Data.num_cycles = 1
 
 Model.model_class = @models.supconresnet
-Model.emb_dim = 10
+Model.emb_dim = 128
 
-Trainer.iters = 100000
+Trainer.iters = 10000
 Trainer.lr = 0.001
 Trainer.wd = 0.0
 Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100
 Trainer.rehearsal = True
-Trainer.rehearsal_weight = 1
+Trainer.rehearsal_weight = 100
 Trainer.num_anchor_img_per_class = 20
 Trainer.use_prototypes = True
 Trainer.loss = @losses.SupConLoss
