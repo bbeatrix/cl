@@ -14,11 +14,10 @@ from losses import SupConLoss
 from utils import save_image
 
 
-
 def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
     if target_type == 'supervised contrastive':
-        return ContrastiveTrainer(*args)
+        return ContrastiveTrainer(*args, multihead=False)
     elif target_type == 'auxiliary selfsupervised':
         return SupervisedWithAuxTrainer(*args)
     elif target_type == 'supervised multihead':
@@ -32,7 +31,7 @@ class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
                  rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, rehearsal_weight=1,
-                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED):
+                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0):
         self.device = device
         self.model = model
         self.data = data
@@ -64,6 +63,7 @@ class Trainer:
         self.num_anchor_img_per_class = num_anchor_img_per_class
         self.rehearsal_weight = rehearsal_weight
         self.contrast_type = contrast_type
+        self.num_replay_images = num_replay_images
 
         CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal']
         err_message = "Contrast type must be element of {}".format(CONTRAST_TYPES)
@@ -73,10 +73,12 @@ class Trainer:
             err_message = 'Contrastive learning with replay does not allow rehearsal yet!'
             assert self.rehearsal is False, err_message
 
+
 class ContrastiveTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         print('CONTRAST TYPE: ', self.contrast_type)
+        self.view_transforms = self.create_view_transforms()
         if self.rehearsal:
             print('Rehearsal is on.')
             self.similarity_matrix = None
@@ -86,6 +88,7 @@ class ContrastiveTrainer(Trainer):
             self.anchor_images = None
             self.init_class_prototypes_and_labels()
 
+
     def init_similarity_matrix(self):
         if self.contrast_type == 'barlow_twins':
             self.similarity_matrix = torch.eye(self.data.num_classes[0] * self.num_anchor_img_per_class,
@@ -93,6 +96,7 @@ class ContrastiveTrainer(Trainer):
                                                device=self.device)
         else:
             self.similarity_matrix = None
+
 
     def init_class_prototypes_and_labels(self):
         self.class_prototypes = {}
@@ -106,47 +110,59 @@ class ContrastiveTrainer(Trainer):
                                              requires_grad=False,
                                              device=self.device)
 
-    def create_image_view(images, n_views=1):
-        augment_transforms = [tfs.RandomResizedCrop(size=self.data.image_size, scale=(0.2, 1.)),
-                              tfs.RandomHorizontalFlip(),
-                              tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
-                                              p=0.8),
-                              tfs.RandomGrayscale(p=0.2)]
-        transformed_image = tfs.Compose(augment)(images)
-        return transformed_images
 
-    def get_batch_for_replay(self):
+    def get_batch_for_replay(self, num_replay_images):
         all_images_for_replay = torch.stack(tuple(self.anchor_images.values()), dim=0)
-        selected_targets = random.choices(list(self.anchor_images.keys()), self.batch_size)
-        selected_indices = random.choices(range(0, self.num_anchor_img_per_class), self.batch_size)
-        indices = list(zip(selected_targets, selected_indices))
-        replay_images = torch.gather(all_images_for_replay, dim=0, index=indices)
+        selected_targets = random.choices(list(self.anchor_images.keys()), k=num_replay_images)
+        selected_indices = random.choices(range(0, self.num_anchor_img_per_class), k=num_replay_images)
+
+        replay_images = [all_images_for_replay[selected_targets[i], selected_indices[i], :, :] for i in range(num_replay_images)]
+        replay_images = torch.stack(replay_images)
         replay_target = torch.tensor(selected_targets)
         return replay_images, replay_target
 
-    def stack_dict_values(self, source_dict)
-        stacked = torch.stack(tuple(source_dict.values()), dim=0)
-        reshaped = stacked.view(-1, stacked.size(-1))
-        return reshaped
+
+    def create_view_transforms(self):
+        view_transforms = [
+            tfs.RandomResizedCrop(size=self.data.image_size, scale=(0.2, 1.)),
+            tfs.RandomHorizontalFlip(),
+            tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                            p=0.8),
+            tfs.RandomGrayscale(p=0.2),
+            tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                          std=[0.2023, 0.1994, 0.2010])]
+        return tfs.Compose(view_transforms)
+
+
+    def create_image_views(self, images, n_views=2):
+        for _ in range(n_views - 1):
+            new_view = self.view_transforms(images)
+            images = torch.cat([images, new_view], dim=0)
+        return images
+
 
     def test_on_batch(self, input_images, target, output_index=0):
-        input_images_doubled = torch.cat([input_images[0], input_images[1]], dim=0)
-        num_input_images = self.batch_size
-        if self.contrast_type == 'with_replay':
-            replay_images, replay_target = self.get_batch_for_replay()
-            replay_images_transformed = self.create_image_view(replay_images).to(self.device)
-            input_images_doubled = torch.cat([input_images_doubled, replay_images, replay_images_transformed], dim=0)
-            target = torch.cat([target, replay_target], dim=0)
+        #input_images_doubled = torch.cat([input_images[0], input_images[1]], dim=0)
+        input_images_doubled = self.create_image_views(input_images).to(self.device)
+        num_input_images = len(input_images) # self.batch_size
+        if self.contrast_type == 'with_replay': # and self.anchor_images is not None:
+            replay_images, replay_target = self.get_batch_for_replay(max(self.batch_size, self.num_replay_images))
+            replay_images_transformed = self.create_image_views(replay_images)
+            input_images_doubled = torch.cat([input_images_doubled, replay_images_transformed], dim=0)
+            target_doubled = torch.cat([target, replay_target], dim=0)
             num_input_images += len(replay_images)
         input_images_doubled = input_images_doubled.to(self.device)
+        input_images = input_images.to(self.device)
         target = target.to(self.device)
+        target_doubled = target_doubled.to(self.device)
 
         model_output_doubled = self.model(input_images_doubled)[output_index]
+        model_output = self.model(input_images)[output_index]
 
         f1, f2 = torch.split(model_output_doubled, [num_input_images, num_input_images], dim=0)
         model_output_splitted = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
 
-        loss_per_sample = self.loss_function(model_output_splitted, target)
+        loss_per_sample = self.loss_function(model_output_splitted, target_doubled)
         loss_mean = torch.mean(loss_per_sample)
 
         if self.rehearsal and self.similarity_matrix is not None:
@@ -169,12 +185,7 @@ class ContrastiveTrainer(Trainer):
             loss_mean += self.rehearsal_weight * rehearsal_loss_mean
 
         if self.use_prototypes:
-            class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-            class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
-            prototype_similarities = self.calc_similarity_matrix(a=model_output,
-                                                                 b=class_prototypes_reshaped)
-            prediction_indices = torch.argmax(prototype_similarities, 1)
-            predictions = self.prototype_labels[prediction_indices]
+            predictions = self.predict_with_prototypes(model_output)
         else:
             predictions = torch.argmax(model_output, dim=1)
 
@@ -183,6 +194,26 @@ class ContrastiveTrainer(Trainer):
                    'accuracy': accuracy}
         return results
 
+    def predict_with_prototypes(self, model_output, ncm=True):
+        class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
+        if ncm is True and len(class_prototypes.size()) > 2:
+            class_prototypes = torch.mean(class_prototypes, dim=1)
+        class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
+        if ncm is True:
+            class_prototypes_tiled = torch.repeat_interleave(class_prototypes_reshaped.unsqueeze(0),
+                                                             self.batch_size,
+                                                             dim=0)
+            model_output_tiled = torch.repeat_interleave(model_output.unsqueeze(1),
+                                                         class_prototypes_tiled.size()[1],
+                                                         dim=1)
+            dists = torch.norm(model_output_tiled - class_prototypes_tiled, p=2, dim=-1)
+            predictions = torch.argmin(dists, dim=-1)
+        else:
+            prototype_similarities = self.calc_similarity_matrix(a=model_output,
+                                                                 b=class_prototypes_reshaped)
+            prediction_indices = torch.argmax(prototype_similarities, 1)
+            predictions = self.prototype_labels[prediction_indices]
+        return predictions
 
     def train_on_batch(self, batch, output_index=0):
         self.optimizer.zero_grad()
@@ -190,6 +221,8 @@ class ContrastiveTrainer(Trainer):
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
+        if self.use_prototypes:
+            self.update_anchor_images(batch[0], batch[1])
         return results
 
 
@@ -252,11 +285,13 @@ class ContrastiveTrainer(Trainer):
                         neptune.send_metric(metric, x=self.global_iters, y=result)
 
                     results_to_log = None
+
                     self.test()
 
                     if self.use_prototypes:
                         self.class_prototypes, self.prototype_labels = self.get_current_prototypes()
 
+            self.log_avg_accuracy()
             if self.rehearsal and self.current_task < self.num_tasks:
                 if self.use_prototypes:
                     class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
@@ -264,6 +299,7 @@ class ContrastiveTrainer(Trainer):
                     self.similarity_matrix = self.calc_similarity_matrix(a=class_prototypes_reshaped)
                 else:
                     self.similarity_matrix = self.calc_similarity_matrix()
+        return
 
 
     def test(self):
@@ -297,6 +333,30 @@ class ContrastiveTrainer(Trainer):
 
                 for metric, result in test_results.items():
                     neptune.send_metric(metric, x=self.global_iters, y=result)
+        return
+
+
+    def log_avg_accuracy(self):
+        with torch.no_grad():
+            self.model.eval()
+            avg_accuracy = 0
+            for idx, current_test_loader in enumerate(self.test_loaders[:(self.current_task + 1)]):
+                test_results = None
+                for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
+                    test_batch_results = self.test_on_batch(*test_batch)
+
+                    if test_results is None:
+                        test_results = test_batch_results.copy()
+                    else:
+                        for metric, result in test_batch_results.items():
+                            test_results[metric] += result.data
+
+                avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
+
+            avg_accuracy /= (self.current_task + 1)
+            print(f'\t average accuracy: ', avg_accuracy)
+            neptune.send_metric('avg accuracy', x=self.global_iters, y=avg_accuracy)
+        return
 
 
     def retain_anchor_images(self):
@@ -313,12 +373,31 @@ class ContrastiveTrainer(Trainer):
             task_targets = [task_ds[i][1] for i in range(len(task_ds))]
             filtered_indices = np.where(np.isin(task_targets, label))[0]
             selected_indices = filtered_indices[:self.num_anchor_img_per_class]
-            selected_images = tuple([task_ds[i][0][0] for i in selected_indices])
-            new_anchor_imgs = torch.stack(selected_images, 0).to(self.device)
+            selected_images = tuple([task_ds[i][0] for i in selected_indices])
+            new_anchor_imgs = torch.stack(selected_images).to(self.device)
             if self.anchor_images is None:
                 self.anchor_images = {label: new_anchor_imgs}
             else:
                 self.anchor_images[label] = new_anchor_imgs
+        return
+
+
+    def update_anchor_images(self, update_images, update_labels): # reservoir
+        print('Update anchor images.')
+
+        num_imgs = len(update_images)
+        update_labels = update_labels.detach().cpu().numpy()
+        for idx in range(num_imgs):
+            image_class = update_labels[idx]
+            class_anchor_images = self.anchor_images[image_class]
+            if len(class_anchor_images) < self.num_anchor_img_per_class:
+                self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx]],
+                                                            dim=0)
+            else:
+                m = random.randrange(self.num_anchor_img_per_class)
+                if m < self.num_anchor_img_per_class:
+                    self.anchor_images[image_class][m] = update_images[idx]
+        return
 
 
     def calc_similarity_matrix(self, a, b=None, eps=1e-9):
@@ -345,7 +424,7 @@ class ContrastiveTrainer(Trainer):
         return prototypes, prototype_labels
 
 
-class SupervisedWithAuxTrainer(SupervisedTrainer):
+class SupervisedWithAuxTrainer(ContrastiveTrainer):
     def __init__(self, *args):
         super().__init__(*args)
         self.aux_loss_function = torch.nn.CrossEntropyLoss(reduction='none')

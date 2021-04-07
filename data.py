@@ -133,10 +133,10 @@ class Data:
 
             train_transforms = tfs.Compose(augment_transforms + image_transforms)
             test_transforms = tfs.Compose(image_transforms)
-            if self.target_type == 'supervised contrastive':
-                print('Apply two crop transform for contrastive learning.')
-                train_transforms = TwoCropTransform(train_transforms)
-                test_transforms = TwoCropTransform(test_transforms)
+            #if self.target_type == 'supervised contrastive':
+            #    print('Apply two crop transform for contrastive learning.')
+            #    train_transforms = TwoCropTransform(train_transforms)
+            #    test_transforms = TwoCropTransform(test_transforms)
 
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,

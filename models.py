@@ -108,7 +108,8 @@ def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args)
                   emb_dim,
                   use_classifier_head,
                   block=ResNetBasicBlock,
-                  depths=[2, 2, 2, 2])
+                  depths=[2, 2, 2, 2],
+                  block_sizes=[20, 40, 80, 160])
 
 @gin.configurable
 def novelresnet18(input_shape, output_shape):
