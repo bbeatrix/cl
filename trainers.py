@@ -31,7 +31,7 @@ class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
                  rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, rehearsal_weight=1,
-                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0):
+                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0, num_anchor_images_total=200):
         self.device = device
         self.model = model
         self.data = data
@@ -64,6 +64,7 @@ class Trainer:
         self.rehearsal_weight = rehearsal_weight
         self.contrast_type = contrast_type
         self.num_replay_images = num_replay_images
+        self.num_anchor_images_total = num_anchor_images_total
 
         CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal']
         err_message = "Contrast type must be element of {}".format(CONTRAST_TYPES)
@@ -86,6 +87,7 @@ class ContrastiveTrainer(Trainer):
             print('Use prototypes.')
             print('Anchor images per class: ', self.num_anchor_img_per_class)
             self.anchor_images = None
+            self.num_seen_images_in_stream = 0
             self.init_class_prototypes_and_labels()
 
 
@@ -112,12 +114,19 @@ class ContrastiveTrainer(Trainer):
 
 
     def get_batch_for_replay(self, num_replay_images):
-        all_images_for_replay = torch.stack(tuple(self.anchor_images.values()), dim=0)
-        selected_targets = random.choices(list(self.anchor_images.keys()), k=num_replay_images)
-        selected_indices = random.choices(range(0, self.num_anchor_img_per_class), k=num_replay_images)
+        all_images_for_replay = torch.cat(tuple(self.anchor_images.values()), dim=0)
+        num_images_per_class = [item.size()[0] for item in self.anchor_images.values()]
+        all_targets_for_replay = []
+        for idx, k in enumerate(self.anchor_images.keys()):
+            all_targets_for_replay.extend([k] * num_images_per_class[idx])
+        num_anchor_images = len(all_images_for_replay)
+        if num_anchor_images < num_replay_images:
+            num_replay_images = num_anchor_images
 
-        replay_images = [all_images_for_replay[selected_targets[i], selected_indices[i], :, :] for i in range(num_replay_images)]
-        replay_images = torch.stack(replay_images)
+        selected_indices = random.choices(range(0, num_anchor_images), k=num_replay_images)
+        selected_images = [all_images_for_replay[i, :, :, :] for i in selected_indices]
+        selected_targets = [all_targets_for_replay[i] for i in selected_indices]
+        replay_images = torch.stack(selected_images, dim=0)
         replay_target = torch.tensor(selected_targets)
         return replay_images, replay_target
 
@@ -142,15 +151,16 @@ class ContrastiveTrainer(Trainer):
 
 
     def test_on_batch(self, input_images, target, output_index=0):
-        #input_images_doubled = torch.cat([input_images[0], input_images[1]], dim=0)
         input_images_doubled = self.create_image_views(input_images).to(self.device)
-        num_input_images = len(input_images) # self.batch_size
-        if self.contrast_type == 'with_replay': # and self.anchor_images is not None:
-            replay_images, replay_target = self.get_batch_for_replay(max(self.batch_size, self.num_replay_images))
+        num_input_images = len(input_images)
+        if self.contrast_type == 'with_replay' and self.anchor_images is not None:
+            replay_images, replay_target = self.get_batch_for_replay(self.num_replay_images)
             replay_images_transformed = self.create_image_views(replay_images)
             input_images_doubled = torch.cat([input_images_doubled, replay_images_transformed], dim=0)
             target_doubled = torch.cat([target, replay_target], dim=0)
             num_input_images += len(replay_images)
+        else:
+            target_doubled = target
         input_images_doubled = input_images_doubled.to(self.device)
         input_images = input_images.to(self.device)
         target = target.to(self.device)
@@ -174,8 +184,6 @@ class ContrastiveTrainer(Trainer):
                 current_similarity_matrix = self.calc_similarity_matrix(prototypes_reshaped)
                 size = self.similarity_matrix.size(0)
                 current_similarity_matrix = current_similarity_matrix[:size, :size]
-            #else:
-            #    current_similarity_matrix = self.calc_similarity_matrix()
 
             row = np.random.choice(current_similarity_matrix.shape[0], 1, replace=False)
             column = np.random.choice(current_similarity_matrix.shape[1], 1, replace=False)
@@ -195,11 +203,12 @@ class ContrastiveTrainer(Trainer):
         return results
 
     def predict_with_prototypes(self, model_output, ncm=True):
-        class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-        if ncm is True and len(class_prototypes.size()) > 2:
-            class_prototypes = torch.mean(class_prototypes, dim=1)
-        class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
         if ncm is True:
+            if len(list(self.class_prototypes.values())[0].size()) > 1:
+                class_prototypes = torch.cat([torch.mean(item, dim=0, keepdim=True) for item in self.class_prototypes.values()], dim=0)
+            else:
+                class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
+            class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
             class_prototypes_tiled = torch.repeat_interleave(class_prototypes_reshaped.unsqueeze(0),
                                                              self.batch_size,
                                                              dim=0)
@@ -209,6 +218,8 @@ class ContrastiveTrainer(Trainer):
             dists = torch.norm(model_output_tiled - class_prototypes_tiled, p=2, dim=-1)
             predictions = torch.argmin(dists, dim=-1)
         else:
+            class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
+            class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
             prototype_similarities = self.calc_similarity_matrix(a=model_output,
                                                                  b=class_prototypes_reshaped)
             prediction_indices = torch.argmax(prototype_similarities, 1)
@@ -232,7 +243,7 @@ class ContrastiveTrainer(Trainer):
         print("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
-            self.retain_anchor_images()
+            # self.retain_anchor_images()
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
@@ -359,44 +370,39 @@ class ContrastiveTrainer(Trainer):
         return
 
 
-    def retain_anchor_images(self):
-        print('Retain anchor images.')
-        current_train_loader_iterator = iter(self.train_loaders[self.current_task])
-        c = self.data.num_classes[0] // self.num_tasks
-        current_labels = self.data.labels[c * self.current_task : c * (self.current_task + 1)]
-        print(current_labels)
-
-        for label in current_labels:
-            print('label: ', label)
-            task_ds = self.data.train_task_datasets[self.current_task]
-
-            task_targets = [task_ds[i][1] for i in range(len(task_ds))]
-            filtered_indices = np.where(np.isin(task_targets, label))[0]
-            selected_indices = filtered_indices[:self.num_anchor_img_per_class]
-            selected_images = tuple([task_ds[i][0] for i in selected_indices])
-            new_anchor_imgs = torch.stack(selected_images).to(self.device)
-            if self.anchor_images is None:
-                self.anchor_images = {label: new_anchor_imgs}
-            else:
-                self.anchor_images[label] = new_anchor_imgs
-        return
-
-
-    def update_anchor_images(self, update_images, update_labels): # reservoir
-        print('Update anchor images.')
-
+    def update_anchor_images(self, update_images, update_labels):
+        if self.anchor_images is None:
+            self.anchor_images = {}
+        update_images = update_images.to(self.device)
+        num_anchor_images = sum([item.size()[0] for item in list(self.anchor_images.values())])
         num_imgs = len(update_images)
         update_labels = update_labels.detach().cpu().numpy()
+
         for idx in range(num_imgs):
             image_class = update_labels[idx]
-            class_anchor_images = self.anchor_images[image_class]
-            if len(class_anchor_images) < self.num_anchor_img_per_class:
-                self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx]],
-                                                            dim=0)
+            if num_anchor_images > self.num_anchor_images_total:
+                m = random.randrange(self.num_seen_images_in_stream)
+                if m < num_anchor_images:
+                    indices = [list(range(0, item.size()[0])) for item in list(self.anchor_images.values())]
+                    for i in range(len(indices)):
+                        if indices[i][-1] < m:
+                            m = m - len(indices[i])
+                        else:
+                            break
+                    # remove mth element
+                    self.anchor_images[i] = torch.cat((self.anchor_images[i][:m, :,:,:], self.anchor_images[i][m+1:, :,:,:]), dim=0)
+                    if len(self.anchor_images[i]) == 0:
+                        del self.anchor_images[i]
             else:
-                m = random.randrange(self.num_anchor_img_per_class)
-                if m < self.num_anchor_img_per_class:
-                    self.anchor_images[image_class][m] = update_images[idx]
+                num_anchor_images += 1
+
+            if image_class not in self.anchor_images.keys():
+                self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
+            else:
+                class_anchor_images = self.anchor_images[image_class]
+                self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
+                                                                dim=0)
+            self.num_seen_images_in_stream += 1
         return
 
 

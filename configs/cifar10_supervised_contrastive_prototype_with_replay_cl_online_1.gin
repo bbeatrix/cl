@@ -18,6 +18,7 @@ Trainer.log_interval = 100
 Trainer.rehearsal = False
 Trainer.rehearsal_weight = 0
 Trainer.num_anchor_img_per_class = 100
+Trainer.num_anchor_images_total = 200
 Trainer.num_replay_images = 100
 Trainer.use_prototypes = True
 Trainer.loss = @losses.SupConLoss
