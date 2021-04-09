@@ -203,6 +203,8 @@ class ContrastiveTrainer(Trainer):
         return results
 
     def predict_with_prototypes(self, model_output, ncm=True):
+        if self.anchor_images is not None:
+            self.class_prototypes, self.prototype_labels = self.get_current_prototypes()
         if ncm is True:
             if len(list(self.class_prototypes.values())[0].size()) > 1:
                 class_prototypes = torch.cat([torch.mean(item, dim=0, keepdim=True) for item in self.class_prototypes.values()], dim=0)
@@ -299,8 +301,6 @@ class ContrastiveTrainer(Trainer):
 
                     self.test()
 
-                    if self.use_prototypes:
-                        self.class_prototypes, self.prototype_labels = self.get_current_prototypes()
 
             self.log_avg_accuracy()
             if self.rehearsal and self.current_task < self.num_tasks:
