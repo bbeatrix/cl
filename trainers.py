@@ -393,14 +393,21 @@ class ContrastiveTrainer(Trainer):
                     self.anchor_images[i] = torch.cat((self.anchor_images[i][:m, :,:,:], self.anchor_images[i][m+1:, :,:,:]), dim=0)
                     if len(self.anchor_images[i]) == 0:
                         del self.anchor_images[i]
+
+                    if image_class not in self.anchor_images.keys():
+                        self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
+                    else:
+                        class_anchor_images = self.anchor_images[image_class]
+                        self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
+                                                                    dim=0)
             else:
                 num_anchor_images += 1
 
-            if image_class not in self.anchor_images.keys():
-                self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
-            else:
-                class_anchor_images = self.anchor_images[image_class]
-                self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
+                if image_class not in self.anchor_images.keys():
+                    self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
+                else:
+                    class_anchor_images = self.anchor_images[image_class]
+                    self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
                                                                 dim=0)
             self.num_seen_images_in_stream += 1
         return
