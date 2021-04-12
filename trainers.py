@@ -75,21 +75,119 @@ class Trainer:
             assert self.rehearsal is False, err_message
 
 
+class ReservoirMemory:
+    def __init__(self, size_limit, image_shape, target_shape):
+        self.size_limit = size_limit
+        self.size = 0
+        self.num_seen_images_in_stream = 0
+        self.target2indices = {}
+        self.content = {
+            'images': torch.zeros((self.size_limit, *image_shape)),
+            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32)
+        }
+        
+
+    def on_batch_end(self, update_images, update_targets):
+        for i in range(update_images.shape[0]):
+            self._update_with_item(update_images[i], update_targets[i])
+
+    def _update_content_at_idx(self, update_image, update_target, idx):
+        self.content['images'][idx] = update_image
+        self.content['targets'][idx] = update_target
+
+        update_target_value = update_target.item()
+        if update_target_value in self.target2indices.keys():
+            self.target2indices[update_target_value].append(idx)
+        else:
+            self.target2indices[update_target_value] = [idx]
+
+    def _remove_idx_with_target(self, idx, target):
+        old_target = self.content['targets'][idx].item()
+        self.target2indices[old_target].remove(idx)
+
+    def _update_with_item(self, update_image, update_target):
+
+        if self.size < self.size_limit:
+            idx = self.size
+            self._update_content_at_idx(update_image, update_target, idx)
+            self.size += 1
+        else:
+            # memory is full.
+            m = random.randrange(self.num_seen_images_in_stream)
+            if m < self.size_limit:
+                # Put it in
+                idx = m
+                self._remove_idx_with_target(idx, update_target)
+                self._update_content_at_idx(update_image, update_target, idx)
+            
+        self.num_seen_images_in_stream += 1
+
+    def get_samples(self, sample_size, target = None):
+        if target is None:
+            selected_indices = random.choices(range(self.size), k=sample_size)
+        else:
+            indices = self.target2indices[target]
+            selected_indices = random.choices(indices, k=sample_size)
+        
+        sample_images = self.content['images'][selected_indices]
+        sample_targets = self.content['targets'][selected_indices]
+        return sample_images, sample_targets
+
+    def items_by_tagets(self):
+        result = {}
+        for key, indices in self.target2indices.items():
+            result[key] = self.content['images'][indices]
+        return result
+
+
+class PrototypeManager:
+    def __init__(self):
+        pass
+
+class PrototypeManager:
+    def __init__(self, model, memory, device):
+        self.model = model
+        self.memory = memory
+        self.device = device
+        self.prototypes = {}
+        self.prototype_labels = []
+
+    def update_prototypes(self):
+        output_index = 0
+        self.model.eval()
+        with torch.no_grad():
+            for label, images in self.memory.items_by_tagets():
+                features = self.model(images)[output_index].detach()
+                prototypes[label] = features
+                prototype_labels.extend([label]*len(features))
+        prototype_labels = torch.tensor(prototype_labels, requires_grad=False, device=self.device)
+        self.prototypes = prototypes
+        self.prototype_labels = prototype_labels
+
+    def get_prototypes(self):
+        return self.prototypes, self.prototype_labels
+
+
+
 class ContrastiveTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         print('CONTRAST TYPE: ', self.contrast_type)
         self.view_transforms = self.create_view_transforms()
+
         if self.rehearsal:
             print('Rehearsal is on.')
             self.similarity_matrix = None
+            self.rehearsal_memory = ReservoirMemory(size_limit=1000)
+
         if self.use_prototypes:
             print('Use prototypes.')
             print('Anchor images per class: ', self.num_anchor_img_per_class)
             self.anchor_images = None
             self.num_seen_images_in_stream = 0
             self.init_class_prototypes_and_labels()
-
+            self.rehearsal_memory = ReservoirMemory(size_limit=1000, image_shape=self.data.input_shape, target_shape=(1,))
+            self.prototype_manager = PrototypeManager(self.model, self.rehearsal_memory, self.device)
 
     def init_similarity_matrix(self):
         if self.contrast_type == 'barlow_twins':
@@ -114,21 +212,7 @@ class ContrastiveTrainer(Trainer):
 
 
     def get_batch_for_replay(self, num_replay_images):
-        all_images_for_replay = torch.cat(tuple(self.anchor_images.values()), dim=0)
-        num_images_per_class = [item.size()[0] for item in self.anchor_images.values()]
-        all_targets_for_replay = []
-        for idx, k in enumerate(self.anchor_images.keys()):
-            all_targets_for_replay.extend([k] * num_images_per_class[idx])
-        num_anchor_images = len(all_images_for_replay)
-        if num_anchor_images < num_replay_images:
-            num_replay_images = num_anchor_images
-
-        selected_indices = random.choices(range(0, num_anchor_images), k=num_replay_images)
-        selected_images = [all_images_for_replay[i, :, :, :] for i in selected_indices]
-        selected_targets = [all_targets_for_replay[i] for i in selected_indices]
-        replay_images = torch.stack(selected_images, dim=0)
-        replay_target = torch.tensor(selected_targets)
-        return replay_images, replay_target
+        return self.rehearsal_memory.get_samples(num_replay_images)
 
 
     def create_view_transforms(self):
@@ -178,7 +262,7 @@ class ContrastiveTrainer(Trainer):
         if self.rehearsal and self.similarity_matrix is not None:
             print('Add rehearsal loss term.')
             if self.use_prototypes:
-                current_prototypes, _ = self.get_current_prototypes()
+                current_prototypes, _ = self.prototype_manager.get_prototypes()
                 prototypes = torch.stack(tuple(current_prototypes.values()), dim=0)
                 prototypes_reshaped = prototypes.view(-1, prototypes.size(-1))
                 current_similarity_matrix = self.calc_similarity_matrix(prototypes_reshaped)
@@ -229,13 +313,17 @@ class ContrastiveTrainer(Trainer):
         return predictions
 
     def train_on_batch(self, batch, output_index=0):
+
         self.optimizer.zero_grad()
         results = self.test_on_batch(*batch, output_index)
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
         if self.use_prototypes:
-            self.update_anchor_images(batch[0], batch[1])
+            if self.rehearsal_memory is not None:
+                self.rehearsal_memory.on_batch_end(batch[0], batch[1])
+            else:
+                raise NotImplementedError
         return results
 
 
@@ -367,49 +455,6 @@ class ContrastiveTrainer(Trainer):
             avg_accuracy /= (self.current_task + 1)
             print(f'\t average accuracy: ', avg_accuracy)
             neptune.send_metric('avg accuracy', x=self.global_iters, y=avg_accuracy)
-        return
-
-
-    def update_anchor_images(self, update_images, update_labels):
-        if self.anchor_images is None:
-            self.anchor_images = {}
-        update_images = update_images.to(self.device)
-        num_anchor_images = sum([item.size()[0] for item in list(self.anchor_images.values())])
-        num_imgs = len(update_images)
-        update_labels = update_labels.detach().cpu().numpy()
-
-        for idx in range(num_imgs):
-            image_class = update_labels[idx]
-            if num_anchor_images > self.num_anchor_images_total:
-                m = random.randrange(self.num_seen_images_in_stream)
-                if m < num_anchor_images:
-                    indices = [list(range(0, item.size()[0])) for item in list(self.anchor_images.values())]
-                    for i in range(len(indices)):
-                        if indices[i][-1] < m:
-                            m = m - len(indices[i])
-                        else:
-                            break
-                    # remove mth element
-                    self.anchor_images[i] = torch.cat((self.anchor_images[i][:m, :,:,:], self.anchor_images[i][m+1:, :,:,:]), dim=0)
-                    if len(self.anchor_images[i]) == 0:
-                        del self.anchor_images[i]
-
-                    if image_class not in self.anchor_images.keys():
-                        self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
-                    else:
-                        class_anchor_images = self.anchor_images[image_class]
-                        self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
-                                                                    dim=0)
-            else:
-                num_anchor_images += 1
-
-                if image_class not in self.anchor_images.keys():
-                    self.anchor_images[image_class] = update_images[idx].unsqueeze(0)
-                else:
-                    class_anchor_images = self.anchor_images[image_class]
-                    self.anchor_images[image_class] = torch.cat([class_anchor_images, update_images[idx].unsqueeze(0)],
-                                                                dim=0)
-            self.num_seen_images_in_stream += 1
         return
 
 
