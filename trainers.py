@@ -66,7 +66,7 @@ class Trainer:
         self.num_replay_images = num_replay_images
         self.num_anchor_images_total = num_anchor_images_total
 
-        CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal']
+        CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal', 'simple']
         err_message = "Contrast type must be element of {}".format(CONTRAST_TYPES)
         assert (contrast_type in CONTRAST_TYPES) == True, err_message
 
@@ -76,17 +76,16 @@ class Trainer:
 
 
 class ReservoirMemory:
-    def __init__(self, size_limit, image_shape, target_shape):
+    def __init__(self, size_limit, image_shape, target_shape, device):
         self.size_limit = size_limit
         self.size = 0
         self.num_seen_images_in_stream = 0
         self.target2indices = {}
         self.content = {
-            'images': torch.zeros((self.size_limit, *image_shape)),
-            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32)
+            'images': torch.zeros((self.size_limit, *image_shape), device=device),
+            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device)
         }
         
-
     def on_batch_end(self, update_images, update_targets):
         for i in range(update_images.shape[0]):
             self._update_with_item(update_images[i], update_targets[i])
@@ -133,40 +132,53 @@ class ReservoirMemory:
         sample_targets = self.content['targets'][selected_indices]
         return sample_images, sample_targets
 
-    def items_by_tagets(self):
+    def items_by_targets(self):
         result = {}
         for key, indices in self.target2indices.items():
             result[key] = self.content['images'][indices]
         return result
 
+    def empty(self):
+        return self.size == 0
 
-class PrototypeManager:
-    def __init__(self):
-        pass
 
 class PrototypeManager:
     def __init__(self, model, memory, device):
         self.model = model
         self.memory = memory
         self.device = device
-        self.prototypes = {}
-        self.prototype_labels = []
+
+        self.prototypes = None
+        self.prototype_labels = None
 
     def update_prototypes(self):
         output_index = 0
+        
+        p = []
+        pl = []
+
         self.model.eval()
         with torch.no_grad():
-            for label, images in self.memory.items_by_tagets():
+            for label, images in self.memory.items_by_targets().items():
                 features = self.model(images)[output_index].detach()
-                prototypes[label] = features
-                prototype_labels.extend([label]*len(features))
-        prototype_labels = torch.tensor(prototype_labels, requires_grad=False, device=self.device)
-        self.prototypes = prototypes
-        self.prototype_labels = prototype_labels
+
+                p.append(features)
+                pl.extend([label]*features.size(0))
+
+        self.prototypes = torch.cat(p, dim=0)
+        self.prototype_labels = torch.tensor(pl, requires_grad=False, device=self.device)
 
     def get_prototypes(self):
         return self.prototypes, self.prototype_labels
 
+
+
+class ClassMeanPrototypeManager(PrototypeManager):
+    def __init__(self, model, memory, device):
+        super().__init__(model, memory, device)
+
+    def get_prototypes(self):
+        pass
 
 
 class ContrastiveTrainer(Trainer):
@@ -178,15 +190,13 @@ class ContrastiveTrainer(Trainer):
         if self.rehearsal:
             print('Rehearsal is on.')
             self.similarity_matrix = None
-            self.rehearsal_memory = ReservoirMemory(size_limit=1000)
+            self.rehearsal_memory = ReservoirMemory(size_limit=1000, device=self.device)
 
         if self.use_prototypes:
             print('Use prototypes.')
             print('Anchor images per class: ', self.num_anchor_img_per_class)
-            self.anchor_images = None
             self.num_seen_images_in_stream = 0
-            self.init_class_prototypes_and_labels()
-            self.rehearsal_memory = ReservoirMemory(size_limit=1000, image_shape=self.data.input_shape, target_shape=(1,))
+            self.rehearsal_memory = ReservoirMemory(size_limit=1000, image_shape=self.data.input_shape, target_shape=(1,), device=self.device)
             self.prototype_manager = PrototypeManager(self.model, self.rehearsal_memory, self.device)
 
     def init_similarity_matrix(self):
@@ -196,19 +206,6 @@ class ContrastiveTrainer(Trainer):
                                                device=self.device)
         else:
             self.similarity_matrix = None
-
-
-    def init_class_prototypes_and_labels(self):
-        self.class_prototypes = {}
-        for i in range(self.data.num_classes[0]):
-            all_zeros = torch.zeros(self.model.output_shape[0],
-                                    requires_grad=False,
-                                    device=self.device)
-            all_zeros[i] = 1
-            self.class_prototypes[i] = all_zeros
-        self.prototype_labels = torch.tensor(range(self.data.num_classes[0]),
-                                             requires_grad=False,
-                                             device=self.device)
 
 
     def get_batch_for_replay(self, num_replay_images):
@@ -221,9 +218,9 @@ class ContrastiveTrainer(Trainer):
             tfs.RandomHorizontalFlip(),
             tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
                             p=0.8),
-            tfs.RandomGrayscale(p=0.2),
-            tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
-                          std=[0.2023, 0.1994, 0.2010])]
+            tfs.RandomGrayscale(p=0.2)]
+            #tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
+            #              std=[0.2023, 0.1994, 0.2010])]
         return tfs.Compose(view_transforms)
 
 
@@ -236,18 +233,21 @@ class ContrastiveTrainer(Trainer):
 
     def test_on_batch(self, input_images, target, output_index=0):
         input_images_doubled = self.create_image_views(input_images).to(self.device)
+        target = target.to(self.device)
+        input_images = input_images.to(self.device)
         num_input_images = len(input_images)
-        if self.contrast_type == 'with_replay' and self.anchor_images is not None:
+
+        if self.contrast_type == 'with_replay' and not self.rehearsal_memory.empty():
             replay_images, replay_target = self.get_batch_for_replay(self.num_replay_images)
             replay_images_transformed = self.create_image_views(replay_images)
+            replay_target = replay_target.squeeze()
             input_images_doubled = torch.cat([input_images_doubled, replay_images_transformed], dim=0)
             target_doubled = torch.cat([target, replay_target], dim=0)
             num_input_images += len(replay_images)
         else:
             target_doubled = target
+
         input_images_doubled = input_images_doubled.to(self.device)
-        input_images = input_images.to(self.device)
-        target = target.to(self.device)
         target_doubled = target_doubled.to(self.device)
 
         model_output_doubled = self.model(input_images_doubled)[output_index]
@@ -287,29 +287,35 @@ class ContrastiveTrainer(Trainer):
         return results
 
     def predict_with_prototypes(self, model_output, ncm=True):
-        if self.anchor_images is not None:
-            self.class_prototypes, self.prototype_labels = self.get_current_prototypes()
+
+        self.prototype_manager.update_prototypes()
+        class_prototypes, prototype_labels = self.prototype_manager.get_prototypes()
+
         if ncm is True:
+            """
             if len(list(self.class_prototypes.values())[0].size()) > 1:
                 class_prototypes = torch.cat([torch.mean(item, dim=0, keepdim=True) for item in self.class_prototypes.values()], dim=0)
             else:
                 class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-            class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
-            class_prototypes_tiled = torch.repeat_interleave(class_prototypes_reshaped.unsqueeze(0),
+
+            class_prototypes_reshaped = self.class_prototypes.view(-1, self.class_prototypes.size(-1))
+            """
+            class_prototypes_tiled = torch.repeat_interleave(class_prototypes.unsqueeze(0),
                                                              self.batch_size,
                                                              dim=0)
             model_output_tiled = torch.repeat_interleave(model_output.unsqueeze(1),
                                                          class_prototypes_tiled.size()[1],
                                                          dim=1)
             dists = torch.norm(model_output_tiled - class_prototypes_tiled, p=2, dim=-1)
-            predictions = torch.argmin(dists, dim=-1)
+            prediction_indices = torch.argmin(dists, dim=-1)
+            predictions = prototype_labels[prediction_indices]
         else:
             class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
             class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
             prototype_similarities = self.calc_similarity_matrix(a=model_output,
                                                                  b=class_prototypes_reshaped)
             prediction_indices = torch.argmax(prototype_similarities, 1)
-            predictions = self.prototype_labels[prediction_indices]
+            predictions = prototype_labels[prediction_indices]
         return predictions
 
     def train_on_batch(self, batch, output_index=0):
@@ -319,11 +325,6 @@ class ContrastiveTrainer(Trainer):
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
-        if self.use_prototypes:
-            if self.rehearsal_memory is not None:
-                self.rehearsal_memory.on_batch_end(batch[0], batch[1])
-            else:
-                raise NotImplementedError
         return results
 
 
@@ -347,6 +348,13 @@ class ContrastiveTrainer(Trainer):
                 except StopIteration:
                     current_train_loader_iterator = iter(current_train_loader)
                     batch = next(current_train_loader_iterator)
+
+                if self.use_prototypes:
+                    if self.rehearsal_memory is not None:
+                        self.rehearsal_memory.on_batch_end(batch[0], batch[1])
+                    else:
+                        raise NotImplementedError
+
                 if self.multihead:
                     batch_results = self.train_on_batch(batch, self.current_task % self.num_tasks)
                 else:
@@ -391,13 +399,6 @@ class ContrastiveTrainer(Trainer):
 
 
             self.log_avg_accuracy()
-            if self.rehearsal and self.current_task < self.num_tasks:
-                if self.use_prototypes:
-                    class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-                    class_prototypes_reshaped = class_prototypes.view(-1, class_prototypes.size(-1))
-                    self.similarity_matrix = self.calc_similarity_matrix(a=class_prototypes_reshaped)
-                else:
-                    self.similarity_matrix = self.calc_similarity_matrix()
         return
 
 
@@ -467,19 +468,6 @@ class ContrastiveTrainer(Trainer):
         cos_sim = torch.mm(a_norm, b_norm.transpose(0, 1))
         return cos_sim
 
-
-    def get_current_prototypes(self, output_index=0):
-        print('Get current prototypes.')
-        self.model.eval()
-        prototypes = {}
-        prototype_labels = []
-        with torch.no_grad():
-            for label, images in self.anchor_images.items():
-                features = self.model(images)[output_index].detach()
-                prototypes[label] = features
-                prototype_labels.extend([label]*len(features))
-        prototype_labels = torch.tensor(prototype_labels, requires_grad=False, device=self.device)
-        return prototypes, prototype_labels
 
 
 class SupervisedWithAuxTrainer(ContrastiveTrainer):

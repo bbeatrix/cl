@@ -21,7 +21,7 @@ Trainer.num_anchor_img_per_class = 100
 Trainer.num_replay_images = 100
 Trainer.use_prototypes = True
 Trainer.loss = @losses.SupConLoss
-Trainer.contrast_type = 'with_replay'
+Trainer.contrast_type = 'simple'
 
 ReservoirMemory.size_limit = 1000
 
