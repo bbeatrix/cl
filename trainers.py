@@ -85,10 +85,12 @@ class ReservoirMemory:
             'images': torch.zeros((self.size_limit, *image_shape), device=device),
             'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device)
         }
-        
+
+
     def on_batch_end(self, update_images, update_targets):
         for i in range(update_images.shape[0]):
             self._update_with_item(update_images[i], update_targets[i])
+
 
     def _update_content_at_idx(self, update_image, update_target, idx):
         self.content['images'][idx] = update_image
@@ -100,12 +102,13 @@ class ReservoirMemory:
         else:
             self.target2indices[update_target_value] = [idx]
 
+
     def _remove_idx_with_target(self, idx, target):
         old_target = self.content['targets'][idx].item()
         self.target2indices[old_target].remove(idx)
 
-    def _update_with_item(self, update_image, update_target):
 
+    def _update_with_item(self, update_image, update_target):
         if self.size < self.size_limit:
             idx = self.size
             self._update_content_at_idx(update_image, update_target, idx)
@@ -118,19 +121,20 @@ class ReservoirMemory:
                 idx = m
                 self._remove_idx_with_target(idx, update_target)
                 self._update_content_at_idx(update_image, update_target, idx)
-            
         self.num_seen_images_in_stream += 1
 
-    def get_samples(self, sample_size, target = None):
+
+    def get_samples(self, sample_size, target=None):
         if target is None:
             selected_indices = random.choices(range(self.size), k=sample_size)
         else:
             indices = self.target2indices[target]
             selected_indices = random.choices(indices, k=sample_size)
-        
+
         sample_images = self.content['images'][selected_indices]
         sample_targets = self.content['targets'][selected_indices]
         return sample_images, sample_targets
+
 
     def items_by_targets(self):
         result = {}
@@ -138,22 +142,28 @@ class ReservoirMemory:
             result[key] = self.content['images'][indices]
         return result
 
+
     def empty(self):
         return self.size == 0
 
 
 class PrototypeManager:
-    def __init__(self, model, memory, device):
+    def __init__(self, model, memory, device, num_classes):
         self.model = model
         self.memory = memory
         self.device = device
+        self.num_classes = num_classes
 
-        self.prototypes = None
-        self.prototype_labels = None
+        self.prototypes = torch.zeros((self.num_classes, self.model.output_shape[0]),
+                                      requires_grad=False,
+                                      device=self.device)
+        self.prototype_labels = torch.tensor(range(self.num_classes),
+                                             requires_grad=False,
+                                             device=self.device)
 
     def update_prototypes(self):
         output_index = 0
-        
+
         p = []
         pl = []
 
@@ -161,7 +171,7 @@ class PrototypeManager:
         with torch.no_grad():
             for label, images in self.memory.items_by_targets().items():
                 features = self.model(images)[output_index].detach()
-
+                features = torch.mean(features, dim=0, keepdims=True)
                 p.append(features)
                 pl.extend([label]*features.size(0))
 
@@ -172,14 +182,12 @@ class PrototypeManager:
         return self.prototypes, self.prototype_labels
 
 
-
 class ClassMeanPrototypeManager(PrototypeManager):
     def __init__(self, model, memory, device):
         super().__init__(model, memory, device)
 
     def get_prototypes(self):
         pass
-
 
 class ContrastiveTrainer(Trainer):
     def __init__(self, *args, **kwargs):
@@ -194,10 +202,8 @@ class ContrastiveTrainer(Trainer):
 
         if self.use_prototypes:
             print('Use prototypes.')
-            print('Anchor images per class: ', self.num_anchor_img_per_class)
-            self.num_seen_images_in_stream = 0
             self.rehearsal_memory = ReservoirMemory(size_limit=1000, image_shape=self.data.input_shape, target_shape=(1,), device=self.device)
-            self.prototype_manager = PrototypeManager(self.model, self.rehearsal_memory, self.device)
+            self.prototype_manager = PrototypeManager(self.model, self.rehearsal_memory, self.device, self.data.num_classes[0])
 
     def init_similarity_matrix(self):
         if self.contrast_type == 'barlow_twins':
@@ -287,25 +293,16 @@ class ContrastiveTrainer(Trainer):
         return results
 
     def predict_with_prototypes(self, model_output, ncm=True):
-
-        self.prototype_manager.update_prototypes()
         class_prototypes, prototype_labels = self.prototype_manager.get_prototypes()
 
         if ncm is True:
-            """
-            if len(list(self.class_prototypes.values())[0].size()) > 1:
-                class_prototypes = torch.cat([torch.mean(item, dim=0, keepdim=True) for item in self.class_prototypes.values()], dim=0)
-            else:
-                class_prototypes = torch.stack(tuple(self.class_prototypes.values()), dim=0)
-
-            class_prototypes_reshaped = self.class_prototypes.view(-1, self.class_prototypes.size(-1))
-            """
             class_prototypes_tiled = torch.repeat_interleave(class_prototypes.unsqueeze(0),
                                                              self.batch_size,
                                                              dim=0)
             model_output_tiled = torch.repeat_interleave(model_output.unsqueeze(1),
                                                          class_prototypes_tiled.size()[1],
                                                          dim=1)
+
             dists = torch.norm(model_output_tiled - class_prototypes_tiled, p=2, dim=-1)
             prediction_indices = torch.argmin(dists, dim=-1)
             predictions = prototype_labels[prediction_indices]
@@ -319,12 +316,13 @@ class ContrastiveTrainer(Trainer):
         return predictions
 
     def train_on_batch(self, batch, output_index=0):
-
         self.optimizer.zero_grad()
         results = self.test_on_batch(*batch, output_index)
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
+        self.rehearsal_memory.on_batch_end(*batch)
+        self.prototype_manager.update_prototypes()
         return results
 
 
@@ -334,7 +332,6 @@ class ContrastiveTrainer(Trainer):
         print("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
-            # self.retain_anchor_images()
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
@@ -349,12 +346,6 @@ class ContrastiveTrainer(Trainer):
                     current_train_loader_iterator = iter(current_train_loader)
                     batch = next(current_train_loader_iterator)
 
-                if self.use_prototypes:
-                    if self.rehearsal_memory is not None:
-                        self.rehearsal_memory.on_batch_end(batch[0], batch[1])
-                    else:
-                        raise NotImplementedError
-
                 if self.multihead:
                     batch_results = self.train_on_batch(batch, self.current_task % self.num_tasks)
                 else:
@@ -367,6 +358,7 @@ class ContrastiveTrainer(Trainer):
                         results_to_log[metric] += result.data
 
                 if (self.global_iters % self.log_interval == 0):
+                    self.log_images(batch)
                     neptune.send_metric('learning_rate',
                                         x=self.global_iters,
                                         y=self.optimizer.param_groups[0]['lr'])
@@ -397,10 +389,8 @@ class ContrastiveTrainer(Trainer):
 
                     self.test()
 
-
             self.log_avg_accuracy()
         return
-
 
     def test(self):
         with torch.no_grad():
@@ -435,6 +425,20 @@ class ContrastiveTrainer(Trainer):
                     neptune.send_metric(metric, x=self.global_iters, y=result)
         return
 
+    def log_images(self, batch):
+        train_images = self.data.inverse_normalize(batch[0]).permute(0, 2, 3, 1)
+        for i in range(self.batch_size):
+            neptune.log_image('train images',
+                              train_images[i].detach().cpu().numpy(),
+                              image_name=str(batch[1][i].detach().cpu().numpy()))
+        if self.rehearsal_memory is not None:
+            imgs, lbls = self.rehearsal_memory.get_samples(self.batch_size)
+            imgs = self.data.inverse_normalize(imgs).permute(0, 2, 3, 1)
+            for i in range(self.batch_size):
+                neptune.log_image('replay images',
+                                  imgs[i].detach().cpu().numpy(),
+                                  image_name=str(lbls[i].item()))
+        return
 
     def log_avg_accuracy(self):
         with torch.no_grad():
