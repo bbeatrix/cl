@@ -26,6 +26,5 @@ Trainer.contrast_type = 'with_replay'
 ReservoirMemory.size_limit = 1000
 
 SupConLoss.temperature=0.1
-SupConLoss.base_temperature=0.1
 
 torch.optim.SGD.momentum = 0
