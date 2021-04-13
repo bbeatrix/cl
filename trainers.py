@@ -222,48 +222,41 @@ class ContrastiveTrainer(Trainer):
         view_transforms = [
             tfs.RandomResizedCrop(size=self.data.image_size, scale=(0.2, 1.)),
             tfs.RandomHorizontalFlip(),
-            tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
-                            p=0.8),
+            tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
             tfs.RandomGrayscale(p=0.2)]
-            #tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
-            #              std=[0.2023, 0.1994, 0.2010])]
         return tfs.Compose(view_transforms)
 
 
-    def create_image_views(self, images, n_views=2):
-        images = self.view_transforms(images)
+    def create_image_views(self, images, n_views=1):
+        images_views = self.view_transforms(images)
         for _ in range(n_views - 1):
             new_view = self.view_transforms(images)
-            images = torch.cat([images, new_view], dim=0)
-        return images
+            images_views = torch.cat([images_views, new_view], dim=0)
+        return images_views
 
 
     def test_on_batch(self, input_images, target, output_index=0):
-        input_images_doubled = self.create_image_views(input_images).to(self.device)
-        target = target.to(self.device)
         input_images = input_images.to(self.device)
+        target = target.to(self.device)
+        model_output = self.model(input_images)[output_index]
         num_input_images = len(input_images)
+
+        input_images_combined = input_images
+        target_combined = target
 
         if self.contrast_type == 'with_replay' and not self.rehearsal_memory.empty():
             replay_images, replay_target = self.get_batch_for_replay(self.num_replay_images)
-            replay_images_transformed = self.create_image_views(replay_images)
-            replay_target = replay_target.squeeze()
-            input_images_doubled = torch.cat([input_images_doubled, replay_images_transformed], dim=0)
-            target_doubled = torch.cat([target, replay_target], dim=0)
+            input_images_combined = torch.cat([input_images, replay_images], dim=0)
             num_input_images += len(replay_images)
-        else:
-            target_doubled = target
+            replay_target = replay_target.squeeze()
+            target_combined = torch.cat([target, replay_target], dim=0)
 
-        input_images_doubled = input_images_doubled.to(self.device)
-        target_doubled = target_doubled.to(self.device)
+        input_images_combined_view = self.create_image_views(input_images_combined)
+        out1 = self.model(input_images_combined)[output_index].unsqueeze(1)
+        out2 = self.model(input_images_combined_view)[output_index].unsqueeze(1)
+        model_output_combined = torch.cat([out1, out2], dim=1)
 
-        model_output_doubled = self.model(input_images_doubled)[output_index]
-        model_output = self.model(input_images)[output_index]
-
-        f1, f2 = torch.split(model_output_doubled, [num_input_images, num_input_images], dim=0)
-        model_output_splitted = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
-
-        loss_per_sample = self.loss_function(model_output_splitted, target_doubled)
+        loss_per_sample = self.loss_function(model_output_combined, target_combined)
         loss_mean = torch.mean(loss_per_sample)
 
         if self.rehearsal and self.similarity_matrix is not None:

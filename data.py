@@ -97,12 +97,13 @@ class Data:
                                                   transform=test_transforms)
         elif self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
-
-            image_transforms = [tfs.ToTensor(),
-                                tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
-                                              std=[0.2023, 0.1994, 0.2010])]
-            self.inverse_normalize = tfs.Normalize(mean=[-0.4914/0.2023, -0.4822/0.1994, -0.4465/0.2010],
-                                                   std=[1/0.2023, 1/0.1994, 1/0.2010])
+            image_transforms = [tfs.ToTensor()]
+            self.inverse_normalize = torch.nn.Identity()
+            #image_transforms = [tfs.ToTensor(),
+            #                    tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
+            #                                  std=[0.2023, 0.1994, 0.2010])]
+            #self.inverse_normalize = tfs.Normalize(mean=[-0.4914/0.2023, -0.4822/0.1994, -0.4465/0.2010],
+            #                                       std=[1/0.2023, 1/0.1994, 1/0.2010])
             augment_transforms = []
 
             if self.augment:
