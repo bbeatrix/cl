@@ -231,6 +231,7 @@ class ContrastiveTrainer(Trainer):
 
 
     def create_image_views(self, images, n_views=2):
+        images = self.view_transforms(images)
         for _ in range(n_views - 1):
             new_view = self.view_transforms(images)
             images = torch.cat([images, new_view], dim=0)
