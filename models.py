@@ -317,7 +317,10 @@ class ResNet(nn.Module):
         self.features = ResNetFeatures(input_shape[0], *args, **kwargs)
         if emb_dim is not None:
             print('Add extra embedding layer.')
-            self.emb = nn.Linear(self.features.blocks[-1].blocks[-1].expanded_channels, emb_dim)
+            feat_dim = self.features.blocks[-1].blocks[-1].expanded_channels
+            self.emb = nn.Sequential(nn.Linear(feat_dim, feat_dim),
+                                     nn.ReLU(inplace=True),
+                                     nn.Linear(feat_dim, emb_dim))
             feat_dim = emb_dim
         else:
             self.emb = nn.Identity()
