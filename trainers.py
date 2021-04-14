@@ -31,7 +31,8 @@ class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
                  rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, rehearsal_weight=1,
-                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0, num_anchor_images_total=200):
+                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0, num_anchor_images_total=200,
+                 review_training=False):
         self.device = device
         self.model = model
         self.data = data
@@ -65,6 +66,7 @@ class Trainer:
         self.contrast_type = contrast_type
         self.num_replay_images = num_replay_images
         self.num_anchor_images_total = num_anchor_images_total
+        self.review_training = review_training
 
         CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal', 'simple']
         err_message = "Contrast type must be element of {}".format(CONTRAST_TYPES)
@@ -86,6 +88,8 @@ class ReservoirMemory:
             'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device)
         }
 
+    def get_content(self):
+        return self.content['images'], self.content['targets']
 
     def on_batch_end(self, update_images, update_targets):
         for i in range(update_images.shape[0]):
@@ -172,6 +176,7 @@ class PrototypeManager:
             for label, images in self.memory.items_by_targets().items():
                 features = self.model(images)[output_index].detach()
                 features = torch.mean(features, dim=0, keepdims=True)
+                features = features / features.norm(p=2)
                 p.append(features)
                 pl.extend([label]*features.size(0))
 
@@ -384,6 +389,11 @@ class ContrastiveTrainer(Trainer):
                     self.test()
 
             self.log_avg_accuracy()
+
+        if self.review_training is True:
+            self.review_train()
+            self.test()
+            self.log_avg_accuracy()
         return
 
     def test(self):
@@ -466,6 +476,28 @@ class ContrastiveTrainer(Trainer):
         cos_sim = torch.mm(a_norm, b_norm.transpose(0, 1))
         return cos_sim
 
+
+    def review_train(self):
+        self.model.train()
+        output_index = 0
+        images_in_memory, targets_in_memory = self.rehearsal_memory.get_content()
+        review_dataset = torch.utils.data.TensorDataset(images_in_memory, targets_in_memory)
+        review_loader = torch_utils.data.DataLoader(review_dataset, batch_size=self.batch_size, shuffle=True)
+        for epoch in range(1):
+            for i, batch in enumerate(review_loader):
+                batch_images, batch_target = batch
+                out1 = self.model(batch_images)[output_index].unsqueeze(1)
+                out2 = self.model(self.create_image_views(batch_images))[output_index].unsqueeze(1)
+                model_output_combined = torch.cat([out1, out2], dim=1)
+                loss_per_sample = self.loss_function(model_output_combined, batch_target)
+                loss = torch.mean(loss_per_sample)
+                self.optimizer.zero_grad()
+                loss.backward()
+                params = [p for p in self.model.parameters() if p.requires_grad and p.grad is not None]
+                grad = [p.grad.clone()/10. for p in params]
+                for g, p in zip(grad, params):
+                    p.grad.data.copy_(g)
+                self.optimizer.step()
 
 
 class SupervisedWithAuxTrainer(ContrastiveTrainer):

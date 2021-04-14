@@ -22,6 +22,7 @@ Trainer.num_replay_images = 100
 Trainer.use_prototypes = True
 Trainer.loss = @losses.SupConLoss
 Trainer.contrast_type = 'with_replay'
+Trainer.review_training = True
 
 ReservoirMemory.size_limit = 1000
 
