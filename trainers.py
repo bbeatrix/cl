@@ -396,12 +396,11 @@ class ContrastiveTrainer(Trainer):
 
                     self.test()
 
-            self.log_avg_accuracy()
-
-        if self.review_training is True:
-            self.review_train()
+            if self.review_training is True:
+                self.review_train_on_task_end()
             self.test()
             self.log_avg_accuracy()
+
         return
 
     def test(self):
@@ -485,7 +484,7 @@ class ContrastiveTrainer(Trainer):
         return cos_sim
 
 
-    def review_train(self):
+    def review_train_on_task_end(self):
         self.model.train()
         output_index = 0
         images_in_memory, targets_in_memory = self.rehearsal_memory.get_content()
