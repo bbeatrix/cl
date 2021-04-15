@@ -129,11 +129,19 @@ class ReservoirMemory:
 
 
     def get_samples(self, sample_size, target=None):
+        #if target is None:
+        #    selected_indices = random.choices(range(self.size), k=sample_size)
+        #else:
+        #    indices = self.target2indices[target]
+        #    selected_indices = random.choices(indices, k=sample_size)
+
         if target is None:
-            selected_indices = random.choices(range(self.size), k=sample_size)
+            sample_size = min(self.size, sample_size)
+            selected_indices = np.random.choice(range(self.size), sample_size)
         else:
             indices = self.target2indices[target]
-            selected_indices = random.choices(indices, k=sample_size)
+            sample_size = min(sample_size, len(indices))
+            selected_indices = np.random.choice(indices, sample_size)
 
         sample_images = self.content['images'][selected_indices]
         sample_targets = self.content['targets'][selected_indices]
@@ -482,9 +490,10 @@ class ContrastiveTrainer(Trainer):
         output_index = 0
         images_in_memory, targets_in_memory = self.rehearsal_memory.get_content()
         review_dataset = torch.utils.data.TensorDataset(images_in_memory, targets_in_memory)
-        review_loader = torch_utils.data.DataLoader(review_dataset, batch_size=self.batch_size, shuffle=True)
+        review_loader = torch.utils.data.DataLoader(review_dataset, batch_size=self.batch_size, shuffle=True)
         for epoch in range(1):
             for i, batch in enumerate(review_loader):
+                self.global_iters += 1
                 batch_images, batch_target = batch
                 out1 = self.model(batch_images)[output_index].unsqueeze(1)
                 out2 = self.model(self.create_image_views(batch_images))[output_index].unsqueeze(1)
