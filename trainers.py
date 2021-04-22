@@ -166,7 +166,7 @@ class PrototypeManager:
         self.device = device
         self.num_classes = num_classes
 
-        self.prototypes = torch.zeros((self.num_classes, self.model.output_shape[0]),
+        self.prototypes = torch.zeros((self.num_classes, self.model.features_dim),
                                       requires_grad=False,
                                       device=self.device)
         self.prototype_labels = torch.tensor(range(self.num_classes),
@@ -182,9 +182,9 @@ class PrototypeManager:
         self.model.eval()
         with torch.no_grad():
             for label, images in self.memory.items_by_targets().items():
-                features = self.model(images)[output_index].detach()
+                features = self.model.forward_features(images)[output_index].detach()
                 features = torch.mean(features, dim=0, keepdims=True)
-                features = features / features.norm(p=2)
+                features = features / features.norm()
                 p.append(features)
                 pl.extend([label]*features.size(0))
 
@@ -248,11 +248,9 @@ class ContrastiveTrainer(Trainer):
         return images_views
 
 
-    def test_on_batch(self, input_images, target, output_index=0):
+    def calc_loss_on_batch(self, input_images, target, output_index=0):
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        model_output = self.model(input_images)[output_index]
-        num_input_images = len(input_images)
 
         input_images_combined = input_images
         target_combined = target
@@ -260,7 +258,6 @@ class ContrastiveTrainer(Trainer):
         if self.contrast_type == 'with_replay' and not self.rehearsal_memory.empty():
             replay_images, replay_target = self.get_batch_for_replay(self.num_replay_images)
             input_images_combined = torch.cat([input_images, replay_images], dim=0)
-            num_input_images += len(replay_images)
             replay_target = replay_target.squeeze()
             target_combined = torch.cat([target, replay_target], dim=0)
 
@@ -288,6 +285,16 @@ class ContrastiveTrainer(Trainer):
             rehearsal_loss_mean = torch.mean((self.similarity_matrix - current_similarity_matrix)**2).squeeze()
             print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {rehearsal_loss_mean}')
             loss_mean += self.rehearsal_weight * rehearsal_loss_mean
+
+        return loss_mean
+
+
+    def test_on_batch(self, input_images, target, output_index=0):
+        loss_mean = self.calc_loss_on_batch(input_images, target, output_index)
+
+        input_images = input_images.to(self.device)
+        target = target.to(self.device)
+        model_output = self.model.forward_features(input_images)[output_index]
 
         if self.use_prototypes:
             predictions = self.predict_with_prototypes(model_output)
@@ -322,10 +329,13 @@ class ContrastiveTrainer(Trainer):
             predictions = prototype_labels[prediction_indices]
         return predictions
 
+
+
     def train_on_batch(self, batch, output_index=0):
         self.optimizer.zero_grad()
         results = self.test_on_batch(*batch, output_index)
-        results['total_loss_mean'].backward()
+        loss_value = results['total_loss_mean']
+        loss_value.backward()
         self.optimizer.step()
         self.lr_scheduler.step()
         self.rehearsal_memory.on_batch_end(*batch)

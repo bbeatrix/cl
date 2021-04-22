@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 import torchvision as tv
+import torch.nn as nn
+from torch.nn.functional import relu, avg_pool2d
 
 
 @gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
@@ -53,6 +55,164 @@ class Model:
             for param_tensor in self.model.state_dict():
                 print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
         return self.model
+
+
+
+
+def conv3x3(in_planes, out_planes, stride=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=1, bias=False)
+
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = conv3x3(in_planes, planes, stride)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1,
+                          stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
+
+    def forward(self, x):
+        out = relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = relu(out)
+        return out
+
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(planes, self.expansion *
+                               planes, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(self.expansion * planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
+
+    def forward(self, x):
+        out = relu(self.bn1(self.conv1(x)))
+        out = relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        out += self.shortcut(x)
+        out = relu(out)
+        return out
+
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes, nf, bias):
+        super(ResNet, self).__init__()
+        self.in_planes = nf
+        self.conv1 = conv3x3(3, nf * 1)
+        self.bn1 = nn.BatchNorm2d(nf * 1)
+        self.layer1 = self._make_layer(block, nf * 1, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, nf * 2, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, nf * 4, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, nf * 8, num_blocks[3], stride=2)
+        self.linear = nn.Linear(nf * 8 * block.expansion, num_classes, bias=bias)
+
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def features(self, x):
+        '''Features before FC layers'''
+        out = relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = avg_pool2d(out, 4)
+        out = out.view(out.size(0), -1)
+        return out
+
+    def logits(self, x):
+        '''Apply the last FC linear mapping to get logits'''
+        x = self.linear(x)
+        return x
+
+    def forward(self, x):
+        out = self.features(x)
+        logits = self.logits(out)
+        return logits
+
+
+def Reduced_ResNet18(nclasses, nf=20, bias=True):
+    """
+    Reduced ResNet18 as in GEM MIR(note that nf=20).
+    """
+    return ResNet(BasicBlock, [2, 2, 2, 2], nclasses, nf, bias)
+
+
+class SupConResNet(nn.Module):
+    """backbone + projection head"""
+    def __init__(self, output_shape, dim_in=160, head='mlp', feat_dim=128):
+        super(SupConResNet, self).__init__()
+        self.encoder = Reduced_ResNet18(100)
+        self.features_dim = dim_in
+
+        self.output_shape = (feat_dim, ) * len(output_shape)
+
+        if head == 'linear':
+            self.head = nn.Linear(dim_in, feat_dim)
+        elif head == 'mlp':
+            self.head = nn.Sequential(
+                nn.Linear(dim_in, dim_in),
+                nn.ReLU(inplace=True),
+                nn.Linear(dim_in, feat_dim)
+            )
+        elif head == 'None':
+            self.head = None
+            self.output_shape = (dim_in, ) * len(output_shape)
+        else:
+            raise NotImplementedError(
+                'head not supported: {}'.format(head))
+
+    def forward(self, x):
+        feat = self.encoder.features(x)
+        if self.head:
+            feat = F.normalize(self.head(feat), dim=1)
+        else:
+            feat = F.normalize(feat, dim=1)
+        return [feat] * len(self.output_shape)
+
+    def forward_features(self, x):
+        return [self.encoder.features(x)] * len(self.output_shape)
+
+
+
+@gin.configurable
+def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
+    return SupConResNet(output_shape, head='mlp', feat_dim=emb_dim)
+
+
+@gin.configurable
+def resnet18(input_shape, output_shape):
+    return ResNet(input_shape, output_shape, block=ResNetBasicBlock, depths=[2, 2, 2, 2])
 
 
 @gin.configurable
@@ -99,342 +259,6 @@ class VisionTransformer(nn.Module):
         else:
             return list(x)
 
-
-@gin.configurable
-def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
-    #return ResNet(input_shape, output_shape, block=ResNetBottleNeckBlock, depths=[3, 4, 6, 3])
-    return ResNet(input_shape,
-                  output_shape,
-                  emb_dim,
-                  use_classifier_head,
-                  block=ResNetBasicBlock,
-                  depths=[2, 2, 2, 2],
-                  blocks_sizes=[20, 40, 80, 160])
-
-@gin.configurable
-def novelresnet18(input_shape, output_shape):
-    global is_adapters
-    is_adapters = 0
-    return NovelResNet(NovelBasicBlock, num_blocks=[2, 2, 2, 2], output_shape=output_shape)
-
-@gin.configurable
-def resnet18(input_shape, output_shape):
-    return ResNet(input_shape, output_shape, block=ResNetBasicBlock, depths=[2, 2, 2, 2])
-
-@gin.configurable
-def resnet34(input_shape, output_shape):
-    return ResNet(input_shape, output_shape, block=ResNetBasicBlock, depths=[3, 4, 6, 3])
-
-@gin.configurable
-def resnet50(input_shape, output_shape):
-    return ResNet(input_shape, output_shape, block=ResNetBottleNeckBlock, depths=[3, 4, 6, 3])
-
-
-class Conv2dAuto(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.padding =  (self.kernel_size[0] // 2, self.kernel_size[1] // 2)
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.in_channels, self.out_channels =  in_channels, out_channels
-        self.blocks = nn.Identity()
-        self.shortcut = nn.Identity()
-
-    def forward(self, x):
-        residual = x
-        if self.should_apply_shortcut: residual = self.shortcut(x)
-        x = self.blocks(x)
-        x += residual
-        return x
-
-    @property
-    def should_apply_shortcut(self):
-        return self.in_channels != self.out_channels
-
-
-class ResNetResidualBlock(ResidualBlock):
-    conv3x3 = partial(Conv2dAuto, kernel_size=3, bias=False)
-
-    def __init__(self, in_channels, out_channels, expansion=1, downsampling=1, conv=conv3x3,
-                 *args, **kwargs):
-        super().__init__(in_channels, out_channels)
-        self.expansion, self.downsampling, self.conv = expansion, downsampling, conv
-        layers = OrderedDict({'conv' : nn.Conv2d(self.in_channels,
-                                                 self.expanded_channels,
-                                                 kernel_size=1,
-                                                 stride=self.downsampling,
-                                                 bias=False),
-                              'bn' : nn.BatchNorm2d(self.expanded_channels)})
-        self.shortcut = nn.Sequential(layers) if self.should_apply_shortcut else None
-
-    @property
-    def expanded_channels(self):
-        return self.out_channels * self.expansion
-
-    @property
-    def should_apply_shortcut(self):
-        return self.in_channels != self.expanded_channels
-
-
-def conv_bn(in_channels, out_channels, conv, *args, **kwargs):
-    layers = OrderedDict({'conv': conv(in_channels, out_channels, *args, **kwargs),
-                          'bn': nn.BatchNorm2d(out_channels) })
-    return nn.Sequential(layers)
-
-
-class ResNetBasicBlock(ResNetResidualBlock):
-    expansion = 1
-    def __init__(self, in_channels, out_channels, activation=nn.ReLU, *args, **kwargs):
-        super().__init__(in_channels, out_channels, *args, **kwargs)
-        first_conv_bn = conv_bn(self.in_channels,
-                                self.out_channels,
-                                conv=self.conv,
-                                bias=False,
-                                stride=self.downsampling)
-        second_conv_bn = conv_bn(self.out_channels,
-                                 self.expanded_channels,
-                                 conv=self.conv,
-                                 bias=False)
-        self.blocks = nn.Sequential(first_conv_bn,
-                                    activation(),
-                                    second_conv_bn)
-
-
-class ResNetBottleNeckBlock(ResNetResidualBlock):
-    expansion = 4
-    def __init__(self, in_channels, out_channels, activation=nn.ReLU, *args, **kwargs):
-        super().__init__(in_channels, out_channels, expansion=4, *args, **kwargs)
-        first_conv_bn = conv_bn(self.in_channels,
-                                self.out_channels,
-                                self.conv,
-                                kernel_size=1)
-        second_conv_bn = conv_bn(self.out_channels,
-                                 self.out_channels,
-                                 self.conv,
-                                 kernel_size=3,
-                                 stride=self.downsampling)
-        third_conv_bn = conv_bn(self.out_channels,
-                                self.expanded_channels,
-                                self.conv,
-                                kernel_size=1)
-
-        self.blocks = nn.Sequential(first_conv_bn,
-                                    activation(),
-                                    second_conv_bn,
-                                    activation(),
-                                    third_conv_bn)
-
-
-class ResNetLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, block=ResNetBasicBlock, n=1, *args, **kwargs):
-        super().__init__()
-
-        downsampling = 2 if in_channels != out_channels else 1
-
-        first_block = block(in_channels , out_channels, *args, **kwargs, downsampling=downsampling)
-        following_blocks = []
-        for _ in range(n - 1):
-            next_block = block(out_channels * block.expansion,
-                               out_channels,
-                               downsampling=1,
-                               *args,
-                               **kwargs)
-            following_blocks.append(next_block)
-
-        self.blocks = nn.Sequential(first_block, *following_blocks)
-
-    def forward(self, x):
-        x = self.blocks(x)
-        return x
-
-
-class ResNetFeatures(nn.Module):
-    def __init__(self, in_channels=3, blocks_sizes=[64, 128, 256, 512], depths=[2,2,2,2],
-                 activation=nn.ReLU, block=ResNetBasicBlock, *args,**kwargs):
-        super().__init__()
-
-        self.blocks_sizes = blocks_sizes
-
-        gate_conv_layer = nn.Conv2d(in_channels,
-                                    self.blocks_sizes[0],
-                                    kernel_size=7,
-                                    stride=2,
-                                    padding=3,
-                                    bias=False)
-        self.gate = nn.Sequential(gate_conv_layer,
-                                  nn.BatchNorm2d(self.blocks_sizes[0]),
-                                  activation(),
-                                  nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
-
-        self.in_out_block_sizes = list(zip(blocks_sizes, blocks_sizes[1:]))
-
-        first_layer = ResNetLayer(blocks_sizes[0],
-                                  blocks_sizes[0],
-                                  n=depths[0],
-                                  activation=activation,
-                                  block=block,
-                                  *args,
-                                  **kwargs)
-        following_layers = []
-        for (in_channels, out_channels), n in zip(self.in_out_block_sizes, depths[1:]):
-            next_layer = ResNetLayer(in_channels * block.expansion,
-                                     out_channels,
-                                     n=n,
-                                     activation=activation,
-                                     block=block,
-                                     *args,
-                                     **kwargs)
-            following_layers.append(next_layer)
-
-        self.blocks = nn.ModuleList([first_layer, *following_layers])
-        self.avg = nn.AdaptiveAvgPool2d((1, 1))
-
-    def forward(self, x):
-        x = self.gate(x)
-        for block in self.blocks:
-            x = block(x)
-        x = self.avg(x)
-        x = x.view(x.size(0), -1)
-        return x
-
-
-class ResnetTop(nn.Module):
-    def __init__(self, in_features, n_classes):
-        super().__init__()
-        self.output = nn.Linear(in_features, n_classes)
-
-    def forward(self, x):
-        out = self.output(x)
-        return out
-
-
-class ResNet(nn.Module):
-    def __init__(self, input_shape, output_shape, emb_dim, use_classifier_head, *args, **kwargs):
-        super().__init__()
-        self.features = ResNetFeatures(input_shape[0], *args, **kwargs)
-        if emb_dim is not None:
-            print('Add extra embedding layer.')
-            feat_dim = self.features.blocks[-1].blocks[-1].expanded_channels
-            self.emb = nn.Sequential(nn.Linear(feat_dim, feat_dim),
-                                     nn.ReLU(inplace=True),
-                                     nn.Linear(feat_dim, emb_dim))
-            feat_dim = emb_dim
-        else:
-            self.emb = nn.Identity()
-            feat_dim = self.features.blocks[-1].blocks[-1].expanded_channels
-        self.use_classifier_head = use_classifier_head
-        if self.use_classifier_head is True:
-            self.predictions = nn.ModuleList()
-            for out in output_shape:
-                new_top = ResnetTop(feat_dim, out)
-                self.predictions.append(new_top)
-            self.output_shape = output_shape
-        else:
-            self.output_shape = (feat_dim, ) * len(output_shape)
-
-    def forward(self, x):
-        x = self.emb(self.features(x))
-        x = F.normalize(x, dim=1)
-        if self.use_classifier_head:
-            outputs = []
-            for top in self.predictions:
-                outputs.append(top(x))
-            return outputs
-        else:
-            return [x] * len(self.output_shape)
-
-
-class NovelResNet(nn.Module):
-    """
-    ResNet model from
-    https://github.com/k-han/AutoNovel/blob/master/selfsupervised_learning.py
-    """
-    def __init__(self, block, num_blocks, output_shape=(10,)):
-        super(NovelResNet, self).__init__()
-        self.in_planes = 64
-
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
-        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-        self.heads = nn.ModuleList()
-        for i in range(len(output_shape)):
-            new_head = nn.Linear(512 * block.expansion, output_shape[i])
-            self.heads.append(new_head)
-        if is_adapters:
-            self.parallel_conv1 = nn.Conv2d(3, 64, kernel_size=1, stride=1, bias=False)
-
-    def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
-        layers = []
-        for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes * block.expansion
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        if is_adapters:
-            out = F.relu(self.bn1(self.conv1(x) + self.parallel_conv1(x)))
-        else:
-            out = F.relu(self.bn1(self.conv1(x)))
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
-        out = out.view(out.size(0), -1)
-        outputs = []
-        for layer in self.heads:
-            outputs.append(layer(out))
-        if len(outputs) > 1:
-            return outputs
-        else:
-            return outputs[0]
-
-
-class NovelBasicBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, in_planes, planes, stride=1):
-        super(NovelBasicBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_planes,
-                               planes,
-                               kernel_size=3,
-                               stride=stride,
-                               padding=1,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes,
-                               planes,
-                               kernel_size=3,
-                               stride=1,
-                               padding=1,
-                               bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.shortcut = nn.Sequential()
-        self.is_padding = 0
-        if stride != 1 or in_planes != self.expansion*planes:
-            self.shortcut = nn.AvgPool2d(2)
-            if in_planes != self.expansion*planes:
-                self.is_padding = 1
-
-    def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-
-        if self.is_padding:
-            shortcut = self.shortcut(x)
-            out += torch.cat([shortcut, torch.zeros(shortcut.shape).type(torch.cuda.FloatTensor)],
-                             1)
-        else:
-            out += self.shortcut(x)
-        out = F.relu(out)
-        return out
 
 
 def main(argv):
