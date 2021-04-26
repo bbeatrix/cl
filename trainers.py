@@ -159,6 +159,29 @@ class ReservoirMemory:
         return self.size == 0
 
 
+class FixedMemory(ReservoirMemory):
+    def __init__(self, size_limit, image_shape, target_shape, device, size_limit_per_target=200):
+        self.size_limit = size_limit
+        self.size_limit_per_target = size_limit_per_target
+        self.size_per_target = {}
+        self.size = 0
+        self.target2indices = {}
+        self.content = {
+            'images': torch.zeros((self.size_limit, *image_shape), device=device),
+            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device)
+        }
+
+    def _update_with_item(self, update_image, update_target):
+        target_value = update_target.item()
+        if target_value not in self.size_per_target.keys():
+            self.size_per_target[target_value] = 0
+        if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
+            idx = self.size
+            self._update_content_at_idx(update_image, update_target, idx)
+            self.size += 1
+            self.size_per_target[target_value] += 1
+
+
 class PrototypeManager:
     def __init__(self, model, memory, device, num_classes):
         self.model = model
