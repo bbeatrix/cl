@@ -5,18 +5,17 @@ import torch
 from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
 
-from utils import rotate_image, TwoCropTransform
-
 
 @gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
-    TARGET_TYPES = ['supervised', 'selfsupervised', 'auxiliary selfsupervised', 'supervised multihead', 'supervised contrastive']
+    TARGET_TYPES = ['supervised contrastive']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
-                 target_type='supervised', augment=True, num_tasks=1, num_cycles=1, apply_vit_transforms=False,
-                 emb_dim=128):
+                 target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
+                 apply_vit_transforms=False):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
+
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
         self.dataset_name = dataset_name
@@ -27,7 +26,6 @@ class Data:
         self.num_tasks = num_tasks
         self.num_cycles = num_cycles
         self.apply_vit_transforms = apply_vit_transforms
-        self.emb_dim = emb_dim
 
         self._setup()
 
@@ -42,50 +40,39 @@ class Data:
         self._create_tasks()
         self._create_loaders()
 
+
     def _get_dataset(self):
         print("Loading {} dataset from {}.".format(self.dataset_name, self.datadir))
+
+        image_transforms = [tfs.ToTensor()]
+        self.inverse_normalize = torch.nn.Identity()
         augment_transforms = []
-        image_transforms = tfs.Compose([tfs.ToTensor()])
 
-        if self.dataset_name == 'omniglot':
-            self.input_shape, self.num_classes = (1, 105, 105), 1623
+        if self.augment:
+            print("Using augmentation on train dataset.")
+            self.input_shape = (3, self.image_size, self.image_size)
 
-            self.train_dataset = datasets.Omniglot(self.datadir,
-                                                   background=True,
-                                                   target_transform=None,
-                                                   download=True,
-                                                   transform=image_transforms)
-            self.test_dataset = datasets.Omniglot(self.datadir,
-                                                  background=False,
-                                                  target_transform=None,
-                                                  download=True,
-                                                  transform=image_transforms)
-        elif self.dataset_name == 'cifar100':
+            if self.apply_vit_transforms is True:
+                augment_transforms = [tfs.Resize(self.image_size),
+                                      tfs.RandomHorizontalFlip()]
+
+                image_transforms = [tfs.Resize(self.image_size),
+                                    tfs.ToTensor(),
+                                    tfs.Normalize(mean=[0.5, 0.5, 0.5],
+                                                  std=[0.5, 0.5, 0.5])]
+            else:
+                augment_transforms = [tfs.RandomResizedCrop(size=self.image_size,
+                                                            scale=(0.2, 1.)),
+                                      tfs.RandomHorizontalFlip(),
+                                      tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                                                      p=0.8),
+                                      tfs.RandomGrayscale(p=0.2)]
+
+        train_transforms = tfs.Compose(augment_transforms + image_transforms)
+        test_transforms = tfs.Compose(image_transforms)
+
+        if self.dataset_name == 'cifar100':
             self.input_shape, self.num_classes = (3, 32, 32), 100
-
-            image_transforms = [tfs.ToTensor(),
-                                tfs.Normalize(mean=[0.507, 0.487, 0.441],
-                                              std=[0.267, 0.256, 0.276])]
-
-            if self.augment:
-                print("Using augmentation on train dataset.")
-                if self.apply_vit_transforms is True:
-                    self.input_shape = (3, self.image_size, self.image_size)
-
-                    augment_transforms = [tfs.Resize(self.image_size),
-                                          #tfs.RandomCrop(384, padding=0),
-                                          tfs.RandomHorizontalFlip()]
-
-                    image_transforms = [tfs.Resize(self.image_size),
-                                        tfs.ToTensor(),
-                                        tfs.Normalize(mean=[0.5, 0.5, 0.5],
-                                                      std=[0.5, 0.5, 0.5])]
-                else:
-                    augment_transforms = [tfs.RandomCrop(32, padding=4),
-                                          tfs.RandomHorizontalFlip()]
-
-            train_transforms = tfs.Compose(augment_transforms + image_transforms)
-            test_transforms = tfs.Compose(image_transforms)
 
             self.train_dataset = datasets.CIFAR100(self.datadir,
                                                    train=True,
@@ -97,49 +84,6 @@ class Data:
                                                   transform=test_transforms)
         elif self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
-            image_transforms = [tfs.ToTensor()]
-            self.inverse_normalize = torch.nn.Identity()
-            #image_transforms = [tfs.ToTensor(),
-            #                    tfs.Normalize(mean=[0.4914, 0.4822, 0.4465],
-            #                                  std=[0.2023, 0.1994, 0.2010])]
-            #self.inverse_normalize = tfs.Normalize(mean=[-0.4914/0.2023, -0.4822/0.1994, -0.4465/0.2010],
-            #                                       std=[1/0.2023, 1/0.1994, 1/0.2010])
-            augment_transforms = []
-
-            if self.augment:
-                print("Using augmentation on train dataset.")
-                if self.target_type == 'supervised contrastive':
-                    self.input_shape = (3, self.image_size, self.image_size)
-
-                    augment_transforms = [
-                        tfs.RandomResizedCrop(size=self.image_size, scale=(0.2, 1.)),
-                        tfs.RandomHorizontalFlip(),
-                        tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
-                                               p=0.8),
-                        tfs.RandomGrayscale(p=0.2),
-                    ]
-                    image_transforms.insert(0, tfs.Resize(self.image_size))
-                elif self.apply_vit_transforms is True:
-                    self.input_shape = (3, self.image_size, self.image_size)
-
-                    augment_transforms = [tfs.Resize(self.image_size),
-                                          #tfs.RandomCrop(384, padding=0),
-                                          tfs.RandomHorizontalFlip()]
-
-                    image_transforms = [tfs.Resize(self.image_size),
-                                        tfs.ToTensor(),
-                                        tfs.Normalize(mean=[0.5, 0.5, 0.5],
-                                                      std=[0.5, 0.5, 0.5])]
-                else:
-                    augment_transforms = [tfs.RandomCrop(32, padding=4),
-                                          tfs.RandomHorizontalFlip()]
-
-            train_transforms = tfs.Compose(augment_transforms + image_transforms)
-            test_transforms = tfs.Compose(image_transforms)
-            #if self.target_type == 'supervised contrastive':
-            #    print('Apply two crop transform for contrastive learning.')
-            #    train_transforms = TwoCropTransform(train_transforms)
-            #    test_transforms = TwoCropTransform(test_transforms)
 
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,
@@ -152,12 +96,11 @@ class Data:
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 
+
     def _create_tasks(self):
         self.train_task_datasets, self.test_task_datasets = [], []
 
         if self.num_tasks > 1:
-            #import time
-            #T0 = time.time()
             print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
@@ -181,9 +124,6 @@ class Data:
                                                          testset_filtered_indices)
                 self.train_task_datasets.append(train_ds_subset)
                 self.test_task_datasets.append(test_ds_subset)
-            #T1 = time.time()
-            #print(f"Splitting the dataset takes \t{T1-T0} sec")
-            #exit()
         else:
             self.labels = np.array([i for i in range(self.num_classes)])
             self.train_task_datasets = [self.train_dataset]
@@ -192,65 +132,10 @@ class Data:
         err_message = "Number of train datasets and the number of test datasets should be equal."
         assert len(self.train_task_datasets) == len(self.test_task_datasets), err_message
 
+
     def _create_loaders(self):
-        if self.target_type == 'selfsupervised':
-            print("Self-supervised task: predicting rotation of 0, 90, 180 and 270 degrees.")
-            print("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
-            self.num_classes = (4,)
-
-            def _collate_func(batch):
-                batch = default_collate(batch)
-                err_message = "A batch must contain two tensors: images, labels."
-                assert len(batch) == 2, err_message
-
-                images = np.asarray(batch[0])
-                new_images, new_targets = [], []
-                for img in images:
-                    for target in range(0, 4):
-                        rotated_image = rotate_image(img, angle=90*target)
-                        new_images.append(rotated_image)
-                        new_targets.append(target)
-                images_array = np.array(new_images)
-                targets_array = np.array(new_targets)
-                return (torch.Tensor(images_array), torch.LongTensor(targets_array))
-        elif self.target_type == 'auxiliary selfsupervised':
-            print("Auxiliary task: predicting rotation of 0, 90, 180 and 270 degrees.")
-            print("Batch size becomes 4x larger, that is {}.".format(self.batch_size * 4))
-            self.num_classes = (self.num_classes, 4,)
-
-            def _collate_func(batch):
-                batch = default_collate(batch)
-                err_message = "A batch must contain two tensors: images, labels."
-                assert len(batch) == 2, err_message
-
-                images, targets = np.asarray(batch[0]), np.asarray(batch[1])
-                aux_images, aux_targets = [], []
-                for img in images:
-                    for target in range(0, 4):
-                        rotated_image = rotate_image(img, angle=90*target)
-                        aux_images.append(rotated_image)
-                        aux_targets.append(target)
-                images = torch.Tensor(images)
-                targets = torch.LongTensor(targets)
-                aux_images = torch.Tensor(np.array(aux_images))
-                aux_targets = torch.LongTensor(np.array(aux_targets))
-                return (images, targets, aux_images, aux_targets)
-        elif self.target_type == 'supervised multihead':
-            print('Multihead setup, using different output head for each task.')
-            num_concurrent_classes = self.num_classes // self.num_tasks
-            self.num_classes = (num_concurrent_classes, ) * self.num_tasks
-
-            def _collate_func(batch):
-                batch = default_collate(batch)
-                err_message = "A batch must contain two tensors: images, labels."
-                assert len(batch) == 2, err_message
-
-                images, targets = np.asarray(batch[0]), np.asarray(batch[1])
-                new_targets = targets % num_concurrent_classes
-                return (torch.Tensor(images), torch.LongTensor(new_targets))
-        else:
-            self.num_classes = (self.num_classes,)
-            _collate_func = default_collate
+        self.num_classes = (self.num_classes,)
+        _collate_func = default_collate
 
         print("Creating train and test data loaders.")
         self.train_loaders, self.test_loaders = [], []
@@ -269,3 +154,4 @@ class Data:
                                                                  **self.dataloader_kwargs))
         self.train_loaders = self.train_loaders * self.num_cycles
         self.test_loaders = self.test_loaders * self.num_cycles
+

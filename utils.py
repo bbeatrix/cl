@@ -6,25 +6,6 @@ import numpy as np
 import torchvision as tv
 
 
-class TwoCropTransform:
-    """Create two crops of the same image"""
-    def __init__(self, transform):
-        self.transform = transform
-
-    def __call__(self, x):
-        return [self.transform(x), self.transform(x)]
-
-def rotate_image(image_array, angle):
-    if angle == 0:
-        return image_array
-    elif angle == 90:
-        return image_array.swapaxes(-2, -1)[..., ::-1, :].copy()
-    elif angle == 180:
-        return image_array[..., ::-1, ::-1].copy()
-    elif angle == 270:
-        return image_array.swapaxes(-2, -1)[..., ::-1].copy()
-
-
 def gin_config_to_dict(gin_config):
     params = {}
     for item in gin_config.split("\n"):
