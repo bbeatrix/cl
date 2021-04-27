@@ -31,8 +31,7 @@ class Trainer:
     def __init__(self, device, model, data, logdir, multihead, log_interval=100, iters=1000, lr=0.1,
                  lr_warmup_steps=500, wd=5e-4, optimizer=torch.optim.SGD, lr_scheduler='LR',
                  rehearsal=False, loss=torch.nn.CrossEntropyLoss, use_prototypes=False, rehearsal_weight=1,
-                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0, num_anchor_images_total=200,
-                 review_training=False):
+                 num_anchor_img_per_class=0, contrast_type=gin.REQUIRED, num_replay_images=0, num_anchor_images_total=200):
         self.device = device
         self.model = model
         self.data = data
@@ -66,7 +65,6 @@ class Trainer:
         self.contrast_type = contrast_type
         self.num_replay_images = num_replay_images
         self.num_anchor_images_total = num_anchor_images_total
-        self.review_training = review_training
 
         CONTRAST_TYPES = ['with_replay', 'barlow_twins', 'similarity_rehearsal', 'simple']
         err_message = "Contrast type must be element of {}".format(CONTRAST_TYPES)
@@ -429,8 +427,6 @@ class ContrastiveTrainer(Trainer):
 
                     self.test()
 
-            if self.review_training is True:
-                self.review_train_on_task_end()
             self.test()
             self.log_avg_accuracy()
 
@@ -516,59 +512,3 @@ class ContrastiveTrainer(Trainer):
         cos_sim = torch.mm(a_norm, b_norm.transpose(0, 1))
         return cos_sim
 
-
-    def review_train_on_task_end(self):
-        self.model.train()
-        output_index = 0
-        images_in_memory, targets_in_memory = self.rehearsal_memory.get_content()
-        review_dataset = torch.utils.data.TensorDataset(images_in_memory, targets_in_memory)
-        review_loader = torch.utils.data.DataLoader(review_dataset, batch_size=self.batch_size, shuffle=True)
-        for epoch in range(1):
-            for i, batch in enumerate(review_loader):
-                self.global_iters += 1
-                batch_images, batch_target = batch
-                out1 = self.model(batch_images)[output_index].unsqueeze(1)
-                out2 = self.model(self.create_image_views(batch_images))[output_index].unsqueeze(1)
-                model_output_combined = torch.cat([out1, out2], dim=1)
-                loss_per_sample = self.loss_function(model_output_combined, batch_target)
-                loss = torch.mean(loss_per_sample)
-                self.optimizer.zero_grad()
-                loss.backward()
-                params = [p for p in self.model.parameters() if p.requires_grad and p.grad is not None]
-                grad = [p.grad.clone()/10. for p in params]
-                for g, p in zip(grad, params):
-                    p.grad.data.copy_(g)
-                self.optimizer.step()
-
-
-class SupervisedWithAuxTrainer(ContrastiveTrainer):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.aux_loss_function = torch.nn.CrossEntropyLoss(reduction='none')
-
-    def test_on_batch(self, input_images, target, aux_images, aux_target):
-        inputs = list(map(lambda x: x.to(self.device), [input_images, aux_images]))
-        targets = list(map(lambda x: x.to(self.device), [target, aux_target]))
-
-        outputs = []
-        for idx, x in enumerate(inputs):
-            model_outputs = self.model(x)
-            outputs.append(model_outputs[idx])
-
-        loss_per_sample = self.loss_function(outputs[0], targets[0])
-        loss_mean = torch.mean(loss_per_sample)
-        aux_loss_per_sample = self.aux_loss_function(outputs[1], targets[1])
-        aux_loss_mean = torch.mean(aux_loss_per_sample)
-        total_loss_mean = loss_mean + aux_loss_mean
-
-        predictions = torch.argmax(outputs[0], dim=1)
-        accuracy = torch.mean(torch.eq(predictions, targets[0]).float())
-        aux_predictions = torch.argmax(outputs[1], dim=1)
-        aux_accuracy = torch.mean(torch.eq(aux_predictions, targets[1]).float())
-
-        results = {'total_loss_mean': total_loss_mean,
-                   'loss_mean': loss_mean,
-                   'aux_loss_mean': aux_loss_mean,
-                   'accuracy': accuracy,
-                   'aux_accuracy': aux_accuracy}
-        return results
