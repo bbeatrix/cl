@@ -18,7 +18,7 @@ from utils import save_image
 def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
     if target_type == 'supervised contrastive':
-        return SupervisedContrastiveTrainer(*args)
+        return SupContrastiveTrainer(*args)
     else:
         raise NotImplementedError
 
@@ -189,7 +189,7 @@ class Trainer:
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
-class SupervisedContrastiveTrainer(Trainer):
+class SupContrastiveTrainer(Trainer):
     CONTRAST_TYPES = ['simple', 'with_replay']
 
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
