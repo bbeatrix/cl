@@ -19,6 +19,8 @@ def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
     if target_type == 'supervised contrastive':
         return SupContrastiveTrainer(*args)
+    if target_type == 'unsupervised contrastive':
+        return UnsupContrastiveTrainer(*args)
     else:
         raise NotImplementedError
 
@@ -203,7 +205,7 @@ class SupContrastiveTrainer(Trainer):
         err_message = "Contrast type must be element of {}".format(self.CONTRAST_TYPES)
         assert (contrast_type in self.CONTRAST_TYPES) == True, err_message
 
-        if self.contrast_type == 'with_replay':
+        if 'with_replay' in self.contrast_type:
             print('Use replay from memory.')
             err_message = "Parameter value must be set in config file"
             assert (replay_memory_size is not None) == True, err_message
@@ -216,7 +218,7 @@ class SupContrastiveTrainer(Trainer):
 
         print('Use prototypes for prediction.')
         self.separate_memories = separate_memories
-        if self.separate_memories or self.contrast_type == 'simple':
+        if self.separate_memories or 'simple' in self.contrast_type:
             self.prototype_memory = ReservoirMemory(image_shape=self.data.input_shape,
                                                     target_shape=(1,),
                                                     device=self.device,
@@ -256,7 +258,7 @@ class SupContrastiveTrainer(Trainer):
         input_images_combined = input_images
         target_combined = target
 
-        if self.contrast_type == 'with_replay' and not self.replay_memory.empty():
+        if 'with_replay' in self.contrast_type and not self.replay_memory.empty():
             replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
             input_images_combined = torch.cat([input_images, replay_images], dim=0)
             replay_target = replay_target.squeeze()
@@ -296,9 +298,9 @@ class SupContrastiveTrainer(Trainer):
         loss_value.backward()
         self.optimizer.step()
         self.lr_scheduler.step()
-        if self.contrast_type == 'with_replay':
+        if 'with_replay' in self.contrast_type:
             self.replay_memory.on_batch_end(*batch)
-        if self.separate_memories or self.contrast_type == 'simple':
+        if self.separate_memories or 'simple' in self.contrast_type:
             self.prototype_memory.on_batch_end(*batch)
         self.prototype_manager.update_prototypes()
         return results
@@ -327,7 +329,7 @@ class SupContrastiveTrainer(Trainer):
             neptune.log_image('train images',
                               train_images[i].detach().cpu().numpy(),
                               image_name=str(batch[1][i].detach().cpu().numpy()))
-        if self.contrast_type == 'with_replay' and not self.replay_memory.empty():
+        if 'with_replay' in self.contrast_type and not self.replay_memory.empty():
             imgs, lbls = self.replay_memory.get_samples(self.batch_size)
             imgs = self.data.inverse_normalize(imgs).permute(0, 2, 3, 1)
             for i in range(self.batch_size):
@@ -336,6 +338,33 @@ class SupContrastiveTrainer(Trainer):
                                   image_name=str(lbls[i].item()))
         return
 
+
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+class UnsupContrastiveTrainer(SupContrastiveTrainer):
+    CONTRAST_TYPES = ['simple', 'with_replay']
+
+    def __init__(self, device, model, data, logdir):
+        super().__init__(device, model, data, logdir)
+        self.loss_function = losses.SupConLoss(reduction='none')
+
+
+    def calc_loss_on_batch(self, input_images, target):
+        input_images = input_images.to(self.device)
+        input_images_combined = input_images
+
+        if 'with_replay' in self.contrast_type and not self.replay_memory.empty():
+            replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
+            input_images_combined = torch.cat([input_images, replay_images], dim=0)
+
+        input_images_combined_view = self.create_image_views(input_images_combined)
+        out1 = self.model(input_images_combined).unsqueeze(1)
+        out2 = self.model(input_images_combined_view).unsqueeze(1)
+        model_output_combined = torch.cat([out1, out2], dim=1)
+
+        loss_per_sample = self.loss_function(model_output_combined)
+        loss_mean = torch.mean(loss_per_sample)
+
+        return loss_mean
 
 
 class PrototypeManager:
