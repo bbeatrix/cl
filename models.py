@@ -189,8 +189,7 @@ class SupConResNet(nn.Module):
             self.head = None
             self.output_shape = (dim_in, ) * len(output_shape)
         else:
-            raise NotImplementedError(
-                'head not supported: {}'.format(head))
+            raise NotImplementedError('head not supported: {}'.format(head))
 
     def forward(self, x):
         feat = self.encoder.features(x)
@@ -198,11 +197,10 @@ class SupConResNet(nn.Module):
             feat = F.normalize(self.head(feat), dim=1)
         else:
             feat = F.normalize(feat, dim=1)
-        return [feat] * len(self.output_shape)
+        return feat
 
     def forward_features(self, x):
-        return [self.encoder.features(x)] * len(self.output_shape)
-
+        return self.encoder.features(x)
 
 
 @gin.configurable
@@ -255,10 +253,9 @@ class VisionTransformer(nn.Module):
             outputs = []
             for output in self.output_heads:
                 outputs.append(output(x))
-            return outputs
+            return outputs[0]
         else:
-            return list(x)
-
+            return x
 
 
 def main(argv):
