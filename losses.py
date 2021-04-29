@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import gin
 import gin.torch
+from utils import off_diagonal
 
 
 @gin.configurable(denylist=['reduction'])
@@ -103,3 +104,31 @@ class SupConLoss(nn.Module):
 
         return loss
 
+
+@gin.configurable(denylist=['device', 'batch_size', 'feat_dim'])
+class BarlowTwinsLoss(nn.Module):
+    """Barlow Twins self-supervised loss: https://arxiv.org/pdf/2103.03230.pdf.
+    """
+    def __init__(self, device, batch_size, feat_dim, offdiag_weight=1, scale=1):
+        super(BarlowTwinsLoss, self).__init__()
+        self.batch_size = batch_size
+        self.offdiag_weight = offdiag_weight
+        self.scale = scale
+        self.device = device
+
+    def forward(self, z_a: torch.Tensor, z_b: torch.Tensor):
+        # normalize repr. along the batch dimension
+        z_a_norm = (z_a - z_a.mean(0)) / z_a.std(0) # NxD
+        z_b_norm = (z_b - z_b.mean(0)) / z_b.std(0) # NxD
+
+        N = z_a.size(0)
+        D = z_a.size(1)
+
+        # cross-correlation matrix
+        c = torch.mm(z_a_norm.T, z_b_norm) / N # DxD
+        # loss
+        c_diff = (c - torch.eye(D,device=self.device)).pow(2) # DxD
+        # multiply off-diagonal elems of c_diff by weight
+        c_diff[~torch.eye(D, dtype=bool)] *= self.offdiag_weight
+        loss = c_diff.sum()
+        return loss

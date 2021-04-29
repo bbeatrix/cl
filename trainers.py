@@ -218,13 +218,13 @@ class SupContrastiveTrainer(Trainer):
 
         print('Use prototypes for prediction.')
         self.separate_memories = separate_memories
-        if self.separate_memories or 'simple' in self.contrast_type:
+        if not self.separate_memories and 'with_replay' in self.contrast_type:
+            self.prototype_memory = self.replay_memory
+        else:
             self.prototype_memory = ReservoirMemory(image_shape=self.data.input_shape,
                                                     target_shape=(1,),
                                                     device=self.device,
                                                     size_limit=prototype_memory_size)
-        else:
-            self.prototype_memory = self.replay_memory
 
         self.prototype_manager = PrototypeManager(self.model,
                                                   self.prototype_memory,
@@ -300,7 +300,7 @@ class SupContrastiveTrainer(Trainer):
         self.lr_scheduler.step()
         if 'with_replay' in self.contrast_type:
             self.replay_memory.on_batch_end(*batch)
-        if self.separate_memories or 'simple' in self.contrast_type:
+        if self.separate_memories or 'with_replay' not in self.contrast_type:
             self.prototype_memory.on_batch_end(*batch)
         self.prototype_manager.update_prototypes()
         return results
@@ -341,11 +341,18 @@ class SupContrastiveTrainer(Trainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class UnsupContrastiveTrainer(SupContrastiveTrainer):
-    CONTRAST_TYPES = ['simple', 'with_replay']
+    CONTRAST_TYPES = ['simple', 'with_replay', 'barlow_twins', 'barlow_twins_with_replay']
 
     def __init__(self, device, model, data, logdir):
         super().__init__(device, model, data, logdir)
-        self.loss_function = losses.SupConLoss(reduction='none')
+        if 'barlow_twins' in self.contrast_type:
+            self.loss_function = losses.BarlowTwinsLoss(device=self.device,
+                                                        batch_size=self.batch_size,
+                                                        feat_dim=self.model.features_dim,
+                                                        offdiag_weight=1,
+                                                        scale=1)
+        else:
+            self.loss_function = losses.SupConLoss(reduction='none')
 
 
     def calc_loss_on_batch(self, input_images, target):
@@ -357,12 +364,19 @@ class UnsupContrastiveTrainer(SupContrastiveTrainer):
             input_images_combined = torch.cat([input_images, replay_images], dim=0)
 
         input_images_combined_view = self.create_image_views(input_images_combined)
-        out1 = self.model(input_images_combined).unsqueeze(1)
-        out2 = self.model(input_images_combined_view).unsqueeze(1)
-        model_output_combined = torch.cat([out1, out2], dim=1)
 
-        loss_per_sample = self.loss_function(model_output_combined)
-        loss_mean = torch.mean(loss_per_sample)
+        if 'barlow_twins' in self.contrast_type:
+            out1 = self.model.forward_features(input_images_combined)
+            out2 = self.model.forward_features(input_images_combined_view)
+            loss_mean = self.loss_function(out1, out2)
+        else:
+            out1 = self.model(input_images_combined)
+            out2 = self.model(input_images_combined_view)
+
+            model_output_combined = torch.cat([out1.unsqueeze(1), out2.unsqueeze(1)], dim=1)
+
+            loss_per_sample = self.loss_function(model_output_combined)
+            loss_mean = torch.mean(loss_per_sample)
 
         return loss_mean
 
