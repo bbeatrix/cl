@@ -196,7 +196,7 @@ class SupContrastiveTrainer(Trainer):
 
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
-                 prototypes_mean_reduction=True):
+                 prototypes_mean_reduction=True, sim_pres=True, sim_pres_weight=1000):
         super().__init__(device, model, data, logdir)
         self.loss_function = losses.SupConLoss(reduction='none')
         self.view_transforms = self.create_view_transforms()
@@ -225,12 +225,21 @@ class SupContrastiveTrainer(Trainer):
                                                     target_shape=(1,),
                                                     device=self.device,
                                                     size_limit=prototype_memory_size)
-
-        self.prototype_manager = PrototypeManager(self.model,
-                                                  self.prototype_memory,
-                                                  self.device,
-                                                  self.data.num_classes[0],
-                                                  reduce_to_mean=prototypes_mean_reduction)
+        self.sim_pres = sim_pres
+        if self.sim_pres:
+            self.sim_pres_weight = sim_pres_weight
+            self.prototype_manager = SimPresPrototypeManager(self.model,
+                                                             self.prototype_memory,
+                                                             self.device,
+                                                             self.data.num_classes[0],
+                                                             reduce_to_mean=prototypes_mean_reduction)
+        else:
+            # self.sim_pres_weigth = 0
+            self.prototype_manager = PrototypeManager(self.model,
+                                                      self.prototype_memory,
+                                                      self.device,
+                                                      self.data.num_classes[0],
+                                                      reduce_to_mean=prototypes_mean_reduction)
 
 
 
@@ -272,6 +281,11 @@ class SupContrastiveTrainer(Trainer):
         loss_per_sample = self.loss_function(model_output_combined, target_combined)
         loss_mean = torch.mean(loss_per_sample)
 
+        if self.sim_pres:
+            sim_diff = self.prototype_manager.similarity_matrix_curr - self.prototype_manager.similarity_matrix_prev
+            sim_pres_loss_mean = torch.mean((sim_diff)**2).squeeze()
+            print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {sim_pres_loss_mean}')
+            loss_mean += self.sim_pres_weight * sim_pres_loss_mean
         return loss_mean
 
 
@@ -302,7 +316,7 @@ class SupContrastiveTrainer(Trainer):
             self.replay_memory.on_batch_end(*batch)
         if self.separate_memories or 'with_replay' not in self.contrast_type:
             self.prototype_memory.on_batch_end(*batch)
-        self.prototype_manager.update_prototypes()
+        self.prototype_manager.on_batch_end()
         return results
 
 
@@ -397,8 +411,7 @@ class PrototypeManager:
                                              device=self.device)
 
 
-    def update_prototypes(self):
-
+    def _update_prototypes(self):
         p = []
         pl = []
 
@@ -415,9 +428,36 @@ class PrototypeManager:
         self.prototypes = torch.cat(p, dim=0)
         self.prototype_labels = torch.tensor(pl, requires_grad=False, device=self.device)
 
+    def on_batch_end(self):
+        self._update_prototypes()
 
     def get_prototypes(self):
         return self.prototypes, self.prototype_labels
+
+
+class SimPresPrototypeManager(PrototypeManager):
+    def __init__(self, model, memory, device, num_classes, reduce_to_mean=True):
+        super().__init__(model, memory, device, num_classes, reduce_to_mean)
+        self.similarity_matrix_prev = self.calc_similarity_matrix(self.prototypes, self.prototypes)
+        self.similarity_matrix_curr = self.calc_similarity_matrix(self.prototypes, self.prototypes)
+
+    def calc_similarity_matrix(self, a, b, eps=1e-9):
+        a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
+        a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
+        b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
+        cos_sim = torch.mm(a_norm, b_norm.transpose(0, 1))
+        return cos_sim
+
+    def _update_similarity_matrix(self):
+        self.similarity_matrix_prev = self.similarity_matrix_curr
+        self.similarity_matrix_curr = self.calc_similarity_matrix(self.prototypes, self.prototypes)
+        size = min(self.similarity_matrix_curr.size(0), self.similarity_matrix_prev.size(0))
+        self.similarity_matrix_prev = self.similarity_matrix_prev[:size, :size]
+        self.similarity_matrix_curr = self.similarity_matrix_curr[:size, :size]
+
+    def on_batch_end(self):
+        self._update_prototypes()
+        self._update_similarity_matrix()
 
 
 class Memory:
