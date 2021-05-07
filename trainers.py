@@ -7,6 +7,7 @@ import neptune
 import numpy as np
 import random
 import torch
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR
 import torchvision
 from torchvision import transforms as tfs
@@ -19,7 +20,11 @@ def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
     if target_type == 'supervised contrastive':
         return SupContrastiveTrainer(*args)
-    if target_type == 'unsupervised contrastive':
+    elif target_type == 'supcon with simpreserving':
+        return SimPresSupConTrainer(*args)
+    elif target_type == 'supcon with interpolation':
+        return InterpolSupConTrainer(*args)
+    elif target_type == 'unsupervised contrastive':
         return UnsupContrastiveTrainer(*args)
     else:
         raise NotImplementedError
@@ -65,6 +70,7 @@ class Trainer:
         print("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
+            self.task_end = False
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
@@ -72,6 +78,8 @@ class Trainer:
             for self.iter_count in range(1, self.iters_per_task + 1):
                 self.model.train()
                 self.global_iters += 1
+                if self.iter_count == self.iters_per_task:
+                    self.task_end = True
 
                 try:
                     batch = next(current_train_loader_iterator)
@@ -80,12 +88,6 @@ class Trainer:
                     batch = next(current_train_loader_iterator)
 
                 batch_results = self.train_on_batch(batch)
-
-                if results_to_log is None:
-                    results_to_log = batch_results.copy()
-                else:
-                    for metric, result in batch_results.items():
-                        results_to_log[metric] += result.data
 
                 if (self.global_iters % self.log_interval == 0):
                     self._log_images(batch)
@@ -100,8 +102,7 @@ class Trainer:
                                         x=self.global_iters,
                                         y=self.optimizer.param_groups[0]['lr'])
 
-                    results_to_log = {'train_' + key: value / self.log_interval
-                                      for key, value in results_to_log.items()}
+                    results_to_log = {'train_' + key: value for key, value in batch_results.items()}
 
                     template = ("Task {}/{}x{}\tTrain\tglobal iter: {}, batch: {}/{}, metrics:  "
                                 + "".join([key + ": {:.3f}  " for key in results_to_log.keys()]))
@@ -185,7 +186,7 @@ class Trainer:
                 avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
 
             avg_accuracy /= (self.current_task + 1)
-            print(f'\t average accuracy: ', avg_accuracy)
+            print(f'\t Average accuracy after {self.current_task+1}: ', avg_accuracy)
             neptune.send_metric('avg accuracy', x=self.global_iters, y=avg_accuracy)
         return
 
@@ -196,11 +197,14 @@ class SupContrastiveTrainer(Trainer):
 
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
-                 prototypes_mean_reduction=True, sim_pres=True, sim_pres_weight=1000):
+                 prototypes_mean_reduction=True):
+        print('Supervised contrastive trainer.')
         super().__init__(device, model, data, logdir)
         self.loss_function = losses.SupConLoss(reduction='none')
         self.view_transforms = self.create_view_transforms()
         self.contrast_type = contrast_type
+        self.separate_memories = separate_memories
+        self.prototypes_mean_reduction = prototypes_mean_reduction
 
         err_message = "Contrast type must be element of {}".format(self.CONTRAST_TYPES)
         assert (contrast_type in self.CONTRAST_TYPES) == True, err_message
@@ -217,7 +221,6 @@ class SupContrastiveTrainer(Trainer):
                                                  size_limit=replay_memory_size)
 
         print('Use prototypes for prediction.')
-        self.separate_memories = separate_memories
         if not self.separate_memories and 'with_replay' in self.contrast_type:
             self.prototype_memory = self.replay_memory
         else:
@@ -225,22 +228,12 @@ class SupContrastiveTrainer(Trainer):
                                                     target_shape=(1,),
                                                     device=self.device,
                                                     size_limit=prototype_memory_size)
-        self.sim_pres = sim_pres
-        if self.sim_pres:
-            self.sim_pres_weight = sim_pres_weight
-            self.prototype_manager = SimPresPrototypeManager(self.model,
-                                                             self.prototype_memory,
-                                                             self.device,
-                                                             self.data.num_classes[0],
-                                                             reduce_to_mean=prototypes_mean_reduction)
-        else:
-            # self.sim_pres_weigth = 0
-            self.prototype_manager = PrototypeManager(self.model,
-                                                      self.prototype_memory,
-                                                      self.device,
-                                                      self.data.num_classes[0],
-                                                      reduce_to_mean=prototypes_mean_reduction)
 
+        self.prototype_manager = PrototypeManager(self.model,
+                                                  self.prototype_memory,
+                                                  self.device,
+                                                  self.data.num_classes[0],
+                                                  reduce_to_mean=self.prototypes_mean_reduction)
 
 
     def create_view_transforms(self):
@@ -281,11 +274,6 @@ class SupContrastiveTrainer(Trainer):
         loss_per_sample = self.loss_function(model_output_combined, target_combined)
         loss_mean = torch.mean(loss_per_sample)
 
-        if self.sim_pres:
-            sim_diff = self.prototype_manager.similarity_matrix_curr - self.prototype_manager.similarity_matrix_prev
-            sim_pres_loss_mean = torch.mean((sim_diff)**2).squeeze()
-            print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {sim_pres_loss_mean}')
-            loss_mean += self.sim_pres_weight * sim_pres_loss_mean
         return loss_mean
 
 
@@ -316,7 +304,11 @@ class SupContrastiveTrainer(Trainer):
             self.replay_memory.on_batch_end(*batch)
         if self.separate_memories or 'with_replay' not in self.contrast_type:
             self.prototype_memory.on_batch_end(*batch)
-        self.prototype_manager.on_batch_end()
+        prot_results = self.prototype_manager.on_batch_end()
+
+        results.update(prot_results)
+        if self.task_end:
+            self.prototype_manager.on_task_end()
         return results
 
 
@@ -351,6 +343,97 @@ class SupContrastiveTrainer(Trainer):
                                   imgs[i].detach().cpu().numpy(),
                                   image_name=str(lbls[i].item()))
         return
+
+
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+class SimPresSupConTrainer(SupContrastiveTrainer):
+
+    def __init__(self, device, model, data, logdir, sim_pres_weight=1000):
+        print('Supervised contrastive trainer using similarity preserving constraint.')
+        super().__init__(device, model, data, logdir)
+        self.sim_pres_weight = sim_pres_weight
+        self.prototype_manager = SimPresPrototypeManager(self.model,
+                                                         self.prototype_memory,
+                                                         self.device,
+                                                         self.data.num_classes[0],
+                                                         reduce_to_mean=self.prototypes_mean_reduction)
+
+    def calc_loss_on_batch(self, input_images, target):
+        loss_mean = super().calc_loss_on_batch(input_images, target)
+
+        sim_diff = self.prototype_manager.similarity_matrix_curr - self.prototype_manager.similarity_matrix_prev
+        sim_pres_loss_mean = torch.mean((sim_diff)**2).squeeze()
+        print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {sim_pres_loss_mean}')
+        loss_mean += self.sim_pres_weight * sim_pres_loss_mean
+        return loss_mean
+
+
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+class InterpolSupConTrainer(SupContrastiveTrainer):
+
+    def __init__(self, device, model, data, logdir, interpol_loss_weight=1000, num_interpol_points=3, num_pairs=1,
+                 sim_type='cos'):
+        print('Supervised contrastive trainer using interpolation constraint.')
+        super().__init__(device, model, data, logdir)
+        self.interpol_loss_weight = interpol_loss_weight
+        self.num_interpol_points = num_interpol_points
+        self.num_pairs = num_pairs
+        self.sim_type = sim_type
+        print('Sim type: ', self.sim_type)
+
+        assert 3 <= num_interpol_points, "Number of interpolation points must be greater than or equal to 3."
+
+    def calc_loss_on_batch(self, input_images, target):
+        loss_mean = super().calc_loss_on_batch(input_images, target)
+
+        interpol_loss = []
+        for i in range(self.num_pairs):
+            start_img, end_img = self._get_image_pair(input_images)
+            interpol_loss.append(self.calc_interpol_loss(start_img, end_img, sim_type=self.sim_type))
+        interpol_loss_mean = torch.stack(interpol_loss).mean()
+        print(f'Classification loss mean: {loss_mean} \t interpol loss mean: {interpol_loss_mean}')
+
+        loss_mean += self.interpol_loss_weight * interpol_loss_mean
+        return loss_mean
+
+    def _get_image_pair(self, input_images):
+        if not self.prototype_memory.empty():
+            img_pair, _ = self.prototype_memory.get_samples(2)
+        else:
+            img_pair = input_images[:2]
+        return img_pair[0], img_pair[1]
+
+    def calc_interpol_loss(self, start_image, end_image, sim_type='l2'):
+        alphas = np.linspace(0, 1, self.num_interpol_points)
+        interpol_imgs = torch.stack([i * start_image + (1-i) * end_image for i in alphas])
+        interpol_imgs = interpol_imgs.to(self.device)
+
+        feats = self.model.forward_features(interpol_imgs)
+        start_feat, intermediate_feats, end_feat = feats[0].unsqueeze(0), feats[1:-1].unsqueeze(0), feats[-1].unsqueeze(0)
+        if sim_type == 'l2':
+            interpol_feats = [i * start_feat + (1-i) * end_feat for i in alphas]
+            interpol_loss_mean = torch.norm(torch.stack(interpol_feats) - intermediate_feats, p=2).mean()
+        elif sim_type == 'cos':
+            base_sim = F.cosine_similarity(start_feat, end_feat)
+            interpol_sim_targets = torch.tensor([i * base_sim + (1-i) * 1 for i in alphas], device=self.device)
+            interpol_sims = torch.tensor([F.cosine_similarity(start_feat, feats[i].unsqueeze(0)) for i in range(len(feats))],
+                                         device=self.device)
+            interpol_loss_mean = torch.sub(interpol_sim_targets, interpol_sims).mean()
+        return interpol_loss_mean
+
+
+    def _calc_interpol_loss_cos(self, start_image, end_image, sim_type='cos'):
+        alphas = np.linspace(0, 1, self.num_interpol_points)
+        interpol_imgs = torch.stack([i * start_image + (1-i) * end_image for i in alphas])
+        interpol_imgs = interpol_imgs.to(self.device)
+
+        feats = self.model.forward_features(interpol_imgs)
+        start_feat, end_feat = feats[0], feats[-1]
+        base_sim = F.cosine_similarity(start_feat, end_feat, dim=-1)
+        interpol_sim_targets = [i * base_sim + (1-i) * 1 for i in alphas]
+        interpol_sims = [F.cosine_similarity(start_feat, feat[i]) for i in range(len(feats))]
+        interpol_loss_mean = torch.sub(interpol_sim_targets, interpol_sims).mean()
+        return interpol_loss_mean
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
@@ -409,9 +492,11 @@ class PrototypeManager:
         self.prototype_labels = torch.tensor(range(self.num_classes),
                                              requires_grad=False,
                                              device=self.device)
+        self._prev_prototypes = [self.prototypes]
 
 
     def _update_prototypes(self):
+        print('Update prototypes.')
         p = []
         pl = []
 
@@ -427,12 +512,31 @@ class PrototypeManager:
 
         self.prototypes = torch.cat(p, dim=0)
         self.prototype_labels = torch.tensor(pl, requires_grad=False, device=self.device)
+        return
 
     def on_batch_end(self):
         self._update_prototypes()
+        diffs_to_log = self._get_diffs()
+        return diffs_to_log
+
+    def on_task_end(self):
+        self._retain_prototypes()
 
     def get_prototypes(self):
         return self.prototypes, self.prototype_labels
+
+    def _retain_prototypes(self):
+        self._prev_prototypes.append(self.prototypes)
+
+    def _get_diffs(self):
+        diffs = {}
+        for idx, pp in enumerate(self._prev_prototypes):
+            size = min(self.prototypes.size(0), pp.size(0))
+            l2_dist = torch.norm(pp[:size] - self.prototypes[:size], p=2, dim=-1).mean()
+            cos_sim = F.cosine_similarity(pp[:size], self.prototypes[:size], dim=-1).mean()
+            diffs[f'prototypes_l2_dist_mean_from_{idx}th'] = l2_dist
+            diffs[f'prototypes_cos_sim_mean_from_{idx}th'] = cos_sim
+        return diffs
 
 
 class SimPresPrototypeManager(PrototypeManager):
@@ -458,6 +562,8 @@ class SimPresPrototypeManager(PrototypeManager):
     def on_batch_end(self):
         self._update_prototypes()
         self._update_similarity_matrix()
+        diffs_to_log = self._get_diffs()
+        return diffs_to_log
 
 
 class Memory:
