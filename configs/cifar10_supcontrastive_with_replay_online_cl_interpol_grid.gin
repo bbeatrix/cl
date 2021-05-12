@@ -1,0 +1,30 @@
+ExperimentManager.seed = 1
+
+Data.target_type = 'supcon with interpolation'
+Data.image_size = 32
+Data.batch_size = 10
+Data.augment = False
+Data.num_tasks = 5
+Data.num_cycles = 1
+
+Model.model_class = @models.supconresnet
+Model.emb_dim = 128
+
+Trainer.iters = 5000
+Trainer.lr = 0.1
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+SupContrastiveTrainer.contrast_type = 'with_replay'
+SupContrastiveTrainer.replay_batch_size = 100
+SupContrastiveTrainer.replay_memory_size = 1000
+InterpolSupConTrainer.num_pairs = [1, 5, 10]
+InterpolSupConTrainer.num_interpol_points = [3, 5, 7]
+InterpolSupConTrainer.interpol_loss_weight = [1, 10, 100]
+
+SupConLoss.temperature=0.1
+
+torch.optim.SGD.momentum = 0
+
+descartes_builder.name = 'interpol_grid'
+descartes_builder.params = ['InterpolSupConTrainer.num_pairs', 'InterpolSupConTrainer.num_interpol_points', 'InterpolSupConTrainer.interpol_loss_weight']
