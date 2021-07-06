@@ -415,10 +415,13 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
             interpol_loss_mean = torch.norm(torch.stack(interpol_feats) - intermediate_feats, p=2).mean()
         elif sim_type == 'cos':
             base_sim = F.cosine_similarity(start_feat, end_feat)
-            interpol_sim_targets = torch.tensor([i * base_sim + (1-i) * 1 for i in alphas], device=self.device)
+            interpol_sim_targets = torch.tensor([i * base_sim + (1-i) * 1 for i in alphas], device=self.device).detach()
             interpol_sims = torch.tensor([F.cosine_similarity(start_feat, feats[i].unsqueeze(0)) for i in range(len(feats))],
                                          device=self.device)
-            interpol_loss_mean = torch.sub(interpol_sim_targets, interpol_sims).mean()
+            print('interpol_sim_targets.shape', interpol_sim_targets.shape)
+            print('interpol_sims.shape', interpol_sims.shape)
+
+            interpol_loss_mean = torch.square(torch.sub(interpol_sim_targets, interpol_sims)).mean()
         return interpol_loss_mean
 
 

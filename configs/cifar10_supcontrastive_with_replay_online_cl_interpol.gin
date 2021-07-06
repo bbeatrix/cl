@@ -18,9 +18,9 @@ Trainer.log_interval = 100
 SupContrastiveTrainer.contrast_type = 'with_replay'
 SupContrastiveTrainer.replay_batch_size = 100
 SupContrastiveTrainer.replay_memory_size = 1000
-InterpolSupConTrainer.num_pairs = 1
-InterpolSupConTrainer.num_interpol_points = 3
-InterpolSupConTrainer.interpol_loss_weight = 10
+InterpolSupConTrainer.num_pairs = 10
+InterpolSupConTrainer.num_interpol_points = 7
+InterpolSupConTrainer.interpol_loss_weight = 10.0
 
 SupConLoss.temperature=0.1
 
