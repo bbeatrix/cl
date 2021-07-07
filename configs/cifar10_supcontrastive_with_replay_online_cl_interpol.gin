@@ -20,7 +20,7 @@ SupContrastiveTrainer.replay_batch_size = 100
 SupContrastiveTrainer.replay_memory_size = 1000
 InterpolSupConTrainer.num_pairs = 10
 InterpolSupConTrainer.num_interpol_points = 7
-InterpolSupConTrainer.interpol_loss_weight = 10.0
+InterpolSupConTrainer.interpol_loss_weight = 10000.0
 
 SupConLoss.temperature=0.1
 

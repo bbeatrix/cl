@@ -407,6 +407,7 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
         alphas = np.linspace(0, 1, self.num_interpol_points)
         interpol_imgs = torch.stack([i * start_image + (1-i) * end_image for i in alphas])
         interpol_imgs = interpol_imgs.to(self.device)
+        interpol_imgs.requires_grad = True
 
         feats = self.model.forward_features(interpol_imgs)
         start_feat, intermediate_feats, end_feat = feats[0].unsqueeze(0), feats[1:-1].unsqueeze(0), feats[-1].unsqueeze(0)
@@ -417,11 +418,11 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
             base_sim = F.cosine_similarity(start_feat, end_feat)
             interpol_sim_targets = torch.tensor([i * base_sim + (1-i) * 1 for i in alphas], device=self.device).detach()
             interpol_sims = torch.tensor([F.cosine_similarity(start_feat, feats[i].unsqueeze(0)) for i in range(len(feats))],
-                                         device=self.device)
-            print('interpol_sim_targets.shape', interpol_sim_targets.shape)
-            print('interpol_sims.shape', interpol_sims.shape)
+                                         device=self.device,
+                                         requires_grad=True)
 
             interpol_loss_mean = torch.square(torch.sub(interpol_sim_targets, interpol_sims)).mean()
+
         return interpol_loss_mean
 
 
