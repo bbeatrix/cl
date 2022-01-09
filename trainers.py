@@ -13,12 +13,14 @@ import torchvision
 from torchvision import transforms as tfs
 
 import losses
-from utils import save_image
+from utils import save_image, save_model
 
 
 def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
-    if target_type == 'supervised contrastive':
+    if target_type == 'supervised':
+        return SupTrainer(*args)
+    elif target_type == 'supervised contrastive':
         return SupContrastiveTrainer(*args)
     elif target_type == 'supcon with simpreserving':
         return SimPresSupConTrainer(*args)
@@ -89,7 +91,9 @@ class Trainer:
 
                 batch_results = self.train_on_batch(batch)
 
-                if (self.global_iters % self.log_interval == 0):
+                is_task_start_or_end = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
+
+                if (self.global_iters % self.log_interval == 0) or is_task_start_or_end:
                     self._log_images(batch)
 
                     if self.logdir is not None:
@@ -120,7 +124,9 @@ class Trainer:
                     results_to_log = None
 
                     self.test()
-
+            save_model(self.model,
+                       os.path.join(self.logdir,
+                                    f"model_task={self.current_task}_globaliter={self.global_iters}"))
             self.test()
             self._log_avg_accuracy()
 
@@ -186,9 +192,42 @@ class Trainer:
                 avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
 
             avg_accuracy /= (self.current_task + 1)
-            print(f'\t Average accuracy after {self.current_task+1}: ', avg_accuracy)
+            print(f'\t Average accuracy after {self.current_task+1} task: ', avg_accuracy)
             neptune.send_metric('avg accuracy', x=self.global_iters, y=avg_accuracy)
         return
+
+
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+class SupTrainer(Trainer):
+    def __init__(self, device, model, data, logdir):
+        super().__init__(device, model, data, logdir)
+        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+
+    def calc_loss_on_batch(self, model_output, target):
+        loss_per_sample = self.loss_function(model_output, target)
+        loss_mean = torch.mean(loss_per_sample)
+        return loss_mean
+
+    def test_on_batch(self, batch):
+        input_images, target = batch[0], batch[1]
+        input_images = input_images.to(self.device)
+        target = target.to(self.device)
+        model_output = self.model(input_images)
+
+        loss_mean = self.calc_loss_on_batch(model_output, target)
+        predictions = torch.argmax(model_output, dim=1)
+        accuracy = torch.mean(torch.eq(predictions, target).float())
+        results = {'total_loss_mean': loss_mean,
+                   'accuracy': accuracy}
+        return results
+
+    def train_on_batch(self, batch):
+        self.optimizer.zero_grad()
+        results = self.test_on_batch(batch)
+        results['total_loss_mean'].backward()
+        self.optimizer.step()
+        self.lr_scheduler.step()
+        return results
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])

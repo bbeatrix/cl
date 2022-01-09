@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from functools import partial
+import os
 
 from absl import app
 import gin
@@ -15,7 +16,7 @@ from torch.nn.functional import relu, avg_pool2d
 
 
 @gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
-class Model:
+class Model():
     def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
                  pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
         self.device = device
@@ -43,20 +44,21 @@ class Model:
 
         print("Model summary:\n")
         summary(self.model, self.input_shape)
-        if self.model_path is not None:
-            print("Load model from {}.".format(self.model_path))
-            loaded_state = torch.load(self.model_path)
-            model_state = self.model.state_dict()
-            loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
-                            (model_state[k].shape == loaded_state[k].shape)}
-            model_state.update(loaded_state)
-            self.model.load_state_dict(model_state)
-            print("Model's state_dict:")
-            for param_tensor in self.model.state_dict():
-                print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
+        if os.path.exists(self.model_path):
+            self.load()
         return self.model
 
-
+    def load(self):
+        print("Load model from {}.".format(self.model_path))
+        loaded_state = torch.load(self.model_path)
+        model_state = self.model.state_dict()
+        loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
+                        (model_state[k].shape == loaded_state[k].shape)}
+        model_state.update(loaded_state)
+        self.model.load_state_dict(model_state)
+        print("Model's state_dict:")
+        for param_tensor in self.model.state_dict():
+            print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -118,8 +120,8 @@ class Bottleneck(nn.Module):
         out = relu(out)
         return out
 
-class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes, nf, bias):
+class ResNet(nn.Module, Model):
+    def __init__(self, block, num_blocks, output_shape, nf, bias):
         super(ResNet, self).__init__()
         self.in_planes = nf
         self.conv1 = conv3x3(3, nf * 1)
@@ -128,7 +130,11 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, nf * 2, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, nf * 4, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, nf * 8, num_blocks[3], stride=2)
-        self.linear = nn.Linear(nf * 8 * block.expansion, num_classes, bias=bias)
+
+        self.heads = nn.ModuleList()
+        for i in range(len(output_shape)):
+            new_head = nn.Linear(nf * 8 * block.expansion, output_shape[i], bias=bias)
+            self.heads.append(new_head)
 
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -150,15 +156,15 @@ class ResNet(nn.Module):
         out = out.view(out.size(0), -1)
         return out
 
-    def logits(self, x):
-        '''Apply the last FC linear mapping to get logits'''
-        x = self.linear(x)
-        return x
-
     def forward(self, x):
         out = self.features(x)
-        logits = self.logits(out)
-        return logits
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        if len(outputs) > 1:
+            return outputs
+        else:
+            return outputs[0]
 
 
 def Reduced_ResNet18(nclasses, nf=20, bias=True):
@@ -209,8 +215,8 @@ def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args)
 
 
 @gin.configurable
-def resnet18(input_shape, output_shape):
-    return ResNet(input_shape, output_shape, block=ResNetBasicBlock, depths=[2, 2, 2, 2])
+def resnet18(input_shape, output_shape, use_claasifier_head, *args):
+    return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, 64, True)
 
 
 @gin.configurable

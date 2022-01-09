@@ -1,8 +1,10 @@
 from ast import literal_eval
+from datetime import datetime
 from pydoc import locate
 
 import neptune
 import numpy as np
+import torch
 import torchvision as tv
 
 
@@ -22,6 +24,12 @@ def gin_config_to_dict(gin_config):
 def save_image(image, name, iteration, filename, normalize=True):
     tv.utils.save_image(image, filename, normalize=normalize)
     neptune.log_image(name, x=iteration, y=filename)
+
+def save_model(model, model_path):
+    now = datetime.now()
+    dt_str = f"datettime={now.strftime('%d%m%Y_%H%M%S')}"
+    torch.save(model.state_dict(), "_".join([model_path, dt_str, '.torch']))
+    print("Saved model to {}.".format("_".join([model_path, dt_str, '.torch'])))
 
 
 def off_diagonal(x):

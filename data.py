@@ -8,7 +8,8 @@ from torchvision import datasets, transforms as tfs
 
 @gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
-    TARGET_TYPES = ['supervised contrastive', 'unsupervised contrastive', 'supcon with simpreserving', 'supcon with interpolation']
+    TARGET_TYPES = ['supervised', 'supervised contrastive', 'unsupervised contrastive',
+                    'supcon with simpreserving', 'supcon with interpolation']
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
