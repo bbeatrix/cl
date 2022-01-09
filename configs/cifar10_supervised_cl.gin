@@ -1,0 +1,22 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'cifar10'
+Data.target_type = 'supervised'
+Data.batch_size = 64
+Data.augment = True
+Data.num_tasks = 5
+Data.num_cycles = 2
+
+Model.model_class = @models.resnet18
+Model.model_path = './models/resnet18_cifar10_supervised_cl.pth'
+Model.use_classifier_head = True
+
+Trainer.iters = 40000
+Trainer.lr = 0.01
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+
+torch.optim.SGD.momentum = 0.9
+torch.optim.SGD.nesterov = True
