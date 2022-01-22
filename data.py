@@ -13,7 +13,7 @@ class Data:
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
-                 apply_vit_transforms=False):
+                 apply_vit_transforms=False, tasks_random_splits=False):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
 
@@ -27,6 +27,7 @@ class Data:
         self.num_tasks = num_tasks
         self.num_cycles = num_cycles
         self.apply_vit_transforms = apply_vit_transforms
+        self.tasks_random_splits = tasks_random_splits
 
         self._setup()
 
@@ -102,6 +103,23 @@ class Data:
         self.train_task_datasets, self.test_task_datasets = [], []
 
         if self.num_tasks > 1:
+            if self.tasks_random_splits:
+                print("Splitting training dataset into {} random parts.".format(self.num_tasks))
+                indices_permutation = np.random.permutation(len(self.train_dataset))
+                err_message =  "Number of tarining examples should be divisible by the number of tasks."
+                assert len(self.train_dataset) % self.num_tasks == 0, err_message
+
+                num_concurrent_indices = len(self.train_dataset) // self.num_tasks
+
+                for i in range(0, len(self.train_dataset), num_concurrent_indices):
+                    split_indices = indices_permutation[i: i + num_concurrent_indices]
+
+                    train_ds_subset = torch.utils.data.Subset(self.train_dataset,
+                                                            split_indices)
+                    self.train_task_datasets.append(train_ds_subset)
+                    self.test_task_datasets.append(self.test_dataset)
+                print("\n num train tasks: ", len(self.train_task_datasets))
+                return
             print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
