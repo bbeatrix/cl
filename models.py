@@ -44,7 +44,7 @@ class Model():
 
         print("Model summary:\n")
         summary(self.model, self.input_shape)
-        if os.path.exists(self.model_path):
+        if self.model_path is not None and os.path.exists(self.model_path):
             self.load()
         return self.model
 
@@ -178,7 +178,7 @@ class SupConResNet(nn.Module):
     """backbone + projection head"""
     def __init__(self, output_shape, dim_in=160, head='mlp', feat_dim=128):
         super(SupConResNet, self).__init__()
-        self.encoder = Reduced_ResNet18(100)
+        self.encoder = Reduced_ResNet18((100,))
         self.features_dim = dim_in
 
         self.output_shape = (feat_dim, ) * len(output_shape)
