@@ -11,7 +11,7 @@ import torch
 
 import data
 import models
-import trainers
+import trainers, contrastive_trainers
 from utils import gin_config_to_dict
 
 
