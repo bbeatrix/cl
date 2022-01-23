@@ -27,9 +27,10 @@ def save_image(image, name, iteration, filename, normalize=True):
 
 def save_model(model, model_path):
     now = datetime.now()
-    dt_str = f"datettime={now.strftime('%d%m%Y_%H%M%S')}"
-    torch.save(model.state_dict(), "_".join([model_path, dt_str, '.torch']))
-    print("Saved model to {}.".format("_".join([model_path, dt_str, '.torch'])))
+    dt_str = f"_datettime={now.strftime('%d%m%Y_%H%M%S')}"
+    save_path = model_path + dt_str + '.torch'
+    torch.save(model.state_dict(), save_path)
+    print("Saved model to {}.".format(save_path))
 
 
 def off_diagonal(x):
