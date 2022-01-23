@@ -98,6 +98,9 @@ class Data:
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 
+        self.train_dataset = DatasetWIndices(self.train_dataset)
+        self.test_dataset = DatasetWIndices(self.test_dataset)
+
 
     def _create_tasks(self):
         self.train_task_datasets, self.test_task_datasets = [], []
@@ -174,3 +177,14 @@ class Data:
         self.train_loaders = self.train_loaders * self.num_cycles
         self.test_loaders = self.test_loaders * self.num_cycles
 
+
+class DatasetWIndices(torch.utils.data.Dataset):
+    def __init__(self, tv_dataset):
+        self.dataset = tv_dataset
+
+    def __getitem__(self, index):
+        data, target = self.dataset[index]
+        return data, target, index
+
+    def __len__(self):
+        return len(self.dataset)
