@@ -213,6 +213,9 @@ class SupConResNet(nn.Module):
 def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
     return SupConResNet(output_shape, head='mlp', feat_dim=emb_dim)
 
+@gin.configurable
+def reduced_resnet18(input_shape, output_shape, emb_dim, use_classifier_head, *args):
+    return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, nf=20, bias=True)
 
 @gin.configurable
 def resnet18(input_shape, output_shape, use_claasifier_head, *args):
