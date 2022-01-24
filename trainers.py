@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
-import losses
+import losses, memories
 from utils import save_image, save_model
 
 
@@ -19,6 +19,8 @@ def trainer_maker(target_type, *args):
         return SupTrainer(*args)
     elif target_type == 'supervised with forgetstats':
         return SupTrainerWForgetStats(*args)
+    elif target_type == 'supervised with replay':
+        return SupTrainerWReplay(*args)
     elif target_type == 'supervised contrastive':
         return contrastive_trainers.SupContrastiveTrainer(*args)
     elif target_type == 'supcon with simpreserving':
@@ -298,3 +300,61 @@ class SupTrainerWForgetStats(SupTrainer):
         super(SupTrainerWForgetStats, self).on_task_end()
         self.save_forget_scores()
         return
+
+
+@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+class SupTrainerWReplay(SupTrainer):
+    def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED,
+                 replay_memory_size=None, replay_batch_size=None):
+        print('Supervised trainer.')
+        super().__init__(device, model, data, logdir)
+        self.use_replay = use_replay
+
+        if self.use_replay:
+            print('Use replay from memory.')
+            err_message = "Parameter value must be set in config file"
+            assert (replay_memory_size is not None) == True, err_message
+            assert (replay_batch_size is not None) == True, err_message
+            self.replay_batch_size = replay_batch_size
+            self.replay_memory = memories.ReservoirMemory(image_shape=self.data.input_shape,
+                                                          target_shape=(1,),
+                                                          device=self.device,
+                                                          size_limit=replay_memory_size)
+
+    def calc_loss_on_batch(self, input_images, target):
+        input_images_combined = input_images
+        target_combined = target
+
+        if self.use_replay and not self.replay_memory.empty():
+            replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
+            input_images_combined = torch.cat([input_images, replay_images], dim=0)
+            replay_target = replay_target.squeeze()
+            target_combined = torch.cat([target, replay_target], dim=0)
+
+        model_output = self.model(input_images_combined)
+        loss_per_sample = self.loss_function(model_output, target_combined)
+        loss_mean = torch.mean(loss_per_sample)
+        return loss_mean
+
+    def test_on_batch(self, batch):
+        input_images, target = batch[0], batch[1]
+        input_images = input_images.to(self.device)
+        target = target.to(self.device)
+        loss_mean = self.calc_loss_on_batch(input_images, target)
+
+        model_output = self.model(input_images)
+        predictions = torch.argmax(model_output, dim=1)
+        accuracy = torch.mean(torch.eq(predictions, target).float())
+        results = {'total_loss_mean': loss_mean,
+                   'accuracy': accuracy}
+        return results
+
+    def train_on_batch(self, batch):
+        self.optimizer.zero_grad()
+        results = self.test_on_batch(batch)
+        results['total_loss_mean'].backward()
+        self.optimizer.step()
+        self.lr_scheduler.step()
+        if self.use_replay:
+            self.replay_memory.on_batch_end(*batch)
+        return results
