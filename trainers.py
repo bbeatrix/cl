@@ -17,7 +17,7 @@ def trainer_maker(target_type, *args):
     print(f'\ntarget type: {target_type}\n')
     if target_type == 'supervised':
         return SupTrainer(*args)
-    if target_type == 'supervised with forgetstats':
+    elif target_type == 'supervised with forgetstats':
         return SupTrainerWForgetStats(*args)
     elif target_type == 'supervised contrastive':
         return contrastive_trainers.SupContrastiveTrainer(*args)
@@ -240,10 +240,12 @@ class SupTrainerWForgetStats(SupTrainer):
         super().__init__(device, model, data, logdir)
         self.num_train_examples = len(data.train_dataset)
         self.forget_stats = {
-            "prev_accs": np.zeros(self.num_train_examples, dtype=np.int32),
+            "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
         }
+        self.forget_scores = self.forget_stats["sum_forgets"].copy()
+        self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         self.log_score_freq = log_score_freq
         if not os.path.isdir(os.path.join(self.logdir, "forget_scores")):
             os.makedirs(os.path.join(self.logdir, "forget_scores"))
@@ -251,20 +253,21 @@ class SupTrainerWForgetStats(SupTrainer):
     def update_forget_stats(self, idxs, corrects):
         idxs_where_forgetting = idxs[self.forget_stats["prev_accs"][idxs] > corrects]
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
-        self.forget_stats["prev_accs"][idxs] = corrects
+        self.forget_stats["prev_corrects"][idxs] = corrects
         self.forget_stats["never_correct"] = np.setdiff1d(
             self.forget_stats["never_correct"],
             idxs[corrects.astype(bool)],
             True
         )
+        self.forget_scores = self.forget_stats["num_forgets"].copy()
+        self.forget_scores[self.forget_stats["never_correct"]] = np.inf
+        return
 
     def save_forget_scores(self):
-        forget_scores = self.forget_stats["num_forgets"].copy()
-        forget_scores[self.forget_stats["never_correct"]] = np.inf
         save_path = os.path.join(self.logdir,
                                  "forget_scores",
                                  f"fs_task={self.current_task}_globaliter={self.global_iters}.npy")
-        np.save(save_path, forget_scores)
+        np.save(save_path, self.forget_scores)
 
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
