@@ -6,18 +6,18 @@ import torch
 import torch.nn.functional as F
 from torchvision import transforms as tfs
 
-import losses
-from trainers import Trainer
-from memories import ReservoirMemory, FixedMemory
+import losses, memories
+from trainers import Trainer, SupTrainer
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
-class SupContrastiveTrainer(Trainer):
+class SupContrastiveTrainer(SupTrainer): # SupTrainerWReplay
     CONTRAST_TYPES = ['simple', 'with_replay']
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
 
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
-                 prototypes_mean_reduction=True):
+                 prototypes_mean_reduction=True, replay_memory_type="reservoir"):
         print('Supervised contrastive trainer.')
         super().__init__(device, model, data, logdir)
         self.loss_function = losses.SupConLoss(reduction='none')
@@ -35,19 +35,23 @@ class SupContrastiveTrainer(Trainer):
             assert (replay_memory_size is not None) == True, err_message
             assert (replay_batch_size is not None) == True, err_message
             self.replay_batch_size = replay_batch_size
-            self.replay_memory = ReservoirMemory(image_shape=self.data.input_shape,
-                                                 target_shape=(1,),
-                                                 device=self.device,
-                                                 size_limit=replay_memory_size)
+            self.replay_memory_size = replay_memory_size
+
+            err_message = "Replay memory type must be element of {}".format(self.MEMORY_TYPES)
+            assert (replay_memory_type in self.MEMORY_TYPES) == True, err_message
+            self.replay_memory_type = replay_memory_type
+            self.replay_memory_size_per_target = self.replay_memory_size // self.data.num_classes[0]
+           
+            self.replay_memory = self.init_replay_memory()
 
         print('Use prototypes for prediction.')
         if not self.separate_memories and 'with_replay' in self.contrast_type:
             self.prototype_memory = self.replay_memory
         else:
-            self.prototype_memory = ReservoirMemory(image_shape=self.data.input_shape,
-                                                    target_shape=(1,),
-                                                    device=self.device,
-                                                    size_limit=prototype_memory_size)
+            self.prototype_memory = memories.ReservoirMemory(image_shape=self.data.input_shape,
+                                                             target_shape=(1,),
+                                                             device=self.device,
+                                                             size_limit=prototype_memory_size)
 
         self.prototype_manager = PrototypeManager(self.model,
                                                   self.prototype_memory,
@@ -55,6 +59,33 @@ class SupContrastiveTrainer(Trainer):
                                                   self.data.num_classes[0],
                                                   reduce_to_mean=self.prototypes_mean_reduction)
 
+    def init_replay_memory(self):
+        if self.replay_memory_type == "reservoir":
+            memory = memories.ReservoirMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size
+            )
+        elif self.replay_memory_type == "fixed":
+            memory = memories.FixedMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                size_limit_per_target=self.replay_memory_size_per_target
+            )
+        elif self.replay_memory_type == "forgettables":
+            memory = memories.ForgettablesMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                size_limit_per_target=self.replay_memory_size_per_target,
+                num_train_examples=len(self.data.train_dataset),
+                logdir=self.logdir
+            )
+        return memory
 
     def create_view_transforms(self):
         view_transforms = [
@@ -64,7 +95,6 @@ class SupContrastiveTrainer(Trainer):
             tfs.RandomGrayscale(p=0.2)]
         return tfs.Compose(view_transforms)
 
-
     def create_image_views(self, images, n_views=1):
         images_views = self.view_transforms(images)
         for _ in range(n_views - 1):
@@ -72,11 +102,7 @@ class SupContrastiveTrainer(Trainer):
             images_views = torch.cat([images_views, new_view], dim=0)
         return images_views
 
-
     def calc_loss_on_batch(self, input_images, target):
-        input_images = input_images.to(self.device)
-        target = target.to(self.device)
-
         input_images_combined = input_images
         target_combined = target
 
@@ -96,41 +122,35 @@ class SupContrastiveTrainer(Trainer):
 
         return loss_mean
 
-
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
-        loss_mean = self.calc_loss_on_batch(input_images, target)
-
         input_images = input_images.to(self.device)
         target = target.to(self.device)
+        loss_mean = self.calc_loss_on_batch(input_images, target)
+
         model_output = self.model.forward_features(input_images)
-
         predictions = self.predict_with_prototypes(model_output)
+        corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
+        accuracy_mean = torch.mean(torch.eq(predictions, target).float())
 
-        accuracy = torch.mean(torch.eq(predictions, target).float())
         results = {'total_loss_mean': loss_mean,
-                   'accuracy': accuracy}
+                   'accuracy': accuracy_mean,
+                   'corrects': corrects}
         return results
 
-
-    def train_on_batch(self, batch):
-        self.optimizer.zero_grad()
-        results = self.test_on_batch(batch)
-        loss_value = results['total_loss_mean']
-        loss_value.backward()
-        self.optimizer.step()
-        self.lr_scheduler.step()
+    def on_iter_end(self, batch, batch_results):
         if 'with_replay' in self.contrast_type:
-            self.replay_memory.on_batch_end(*batch)
+            indices_in_ds = batch[2]
+            corrects = batch_results["corrects"]
+            self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
         if self.separate_memories or 'with_replay' not in self.contrast_type:
             self.prototype_memory.on_batch_end(*batch)
         prot_results = self.prototype_manager.on_batch_end()
 
-        results.update(prot_results)
+        batch_results.update(prot_results)
         if self.task_end:
             self.prototype_manager.on_task_end()
-        return results
-
+        super(SupContrastiveTrainer, self).on_iter_end(batch, batch_results)
 
     def predict_with_prototypes(self, model_output):
         class_prototypes, prototype_labels = self.prototype_manager.get_prototypes()
@@ -147,7 +167,6 @@ class SupContrastiveTrainer(Trainer):
         predictions = prototype_labels[prediction_indices]
 
         return predictions
-
 
     def log_images(self, batch):
         train_images = self.data.inverse_normalize(batch[0]).permute(0, 2, 3, 1)
