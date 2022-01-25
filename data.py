@@ -99,7 +99,7 @@ class Data:
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 
-        if self.target_type == 'supervised with forgetstats':
+        if self.target_type in ['supervised with forgetstats', 'supervised with replay']:
             self.train_dataset = DatasetWIndices(self.train_dataset)
             self.test_dataset = DatasetWIndices(self.test_dataset)
 

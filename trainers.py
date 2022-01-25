@@ -191,9 +191,11 @@ class Trainer:
 
                     if test_results is None:
                         test_results = test_batch_results.copy()
+                        test_results = {key: value for key, value in test_results.items()
+                                        if torch.is_tensor(value) == True}
                     else:
-                        for metric, result in test_batch_results.items():
-                            test_results[metric] += result.data
+                        for metric in test_results.keys():
+                            test_results[metric] += test_batch_results[metric].data
 
                 avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
 
@@ -246,14 +248,14 @@ class SupTrainerWForgetStats(SupTrainer):
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
         }
-        self.forget_scores = self.forget_stats["sum_forgets"].copy()
+        self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         self.log_score_freq = log_score_freq
         if not os.path.isdir(os.path.join(self.logdir, "forget_scores")):
             os.makedirs(os.path.join(self.logdir, "forget_scores"))
 
     def update_forget_stats(self, idxs, corrects):
-        idxs_where_forgetting = idxs[self.forget_stats["prev_accs"][idxs] > corrects]
+        idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["prev_corrects"][idxs] = corrects
         self.forget_stats["never_correct"] = np.setdiff1d(
@@ -304,7 +306,9 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED,
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
+
+    def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None):
         print('Supervised trainer.')
         super().__init__(device, model, data, logdir)
@@ -312,14 +316,47 @@ class SupTrainerWReplay(SupTrainer):
 
         if self.use_replay:
             print('Use replay from memory.')
+
+            err_message = "Replay memory type must be element of {}".format(self.MEMORY_TYPES)
+            assert (memory_type in self.MEMORY_TYPES) == True, err_message
+
             err_message = "Parameter value must be set in config file"
             assert (replay_memory_size is not None) == True, err_message
             assert (replay_batch_size is not None) == True, err_message
+            self.memory_type = memory_type
+            self.replay_memory_size = replay_memory_size
             self.replay_batch_size = replay_batch_size
-            self.replay_memory = memories.ReservoirMemory(image_shape=self.data.input_shape,
-                                                          target_shape=(1,),
-                                                          device=self.device,
-                                                          size_limit=replay_memory_size)
+            self.init_memory()
+
+    def init_memory(self):
+        if self.memory_type == "reservoir":
+            self.replay_memory = memories.ReservoirMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size
+            )
+        elif self.memory_type == "fixed":
+            self.replay_memory_size_per_target = self.replay_memory_size // self.data.num_classes[0]
+            self.replay_memory = memories.FixedMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                size_limit_per_target=self.replay_memory_size_per_target
+            )
+        elif self.memory_type == "forgettables":
+            self.replay_memory_size_per_target = self.replay_memory_size // self.data.num_classes[0]
+            self.replay_memory = memories.ForgettablesMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                size_limit_per_target=self.replay_memory_size_per_target,
+                num_train_examples=len(self.data.train_dataset),
+                logdir=self.logdir
+            )
+        return
 
     def calc_loss_on_batch(self, input_images, target):
         input_images_combined = input_images
@@ -344,17 +381,19 @@ class SupTrainerWReplay(SupTrainer):
 
         model_output = self.model(input_images)
         predictions = torch.argmax(model_output, dim=1)
-        accuracy = torch.mean(torch.eq(predictions, target).float())
+        corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
+        accuracy_mean = torch.mean(torch.eq(predictions, target).float())
+
         results = {'total_loss_mean': loss_mean,
-                   'accuracy': accuracy}
+                   'accuracy': accuracy_mean,
+                   'corrects': corrects}
         return results
 
-    def train_on_batch(self, batch):
-        self.optimizer.zero_grad()
-        results = self.test_on_batch(batch)
-        results['total_loss_mean'].backward()
-        self.optimizer.step()
-        self.lr_scheduler.step()
+    def on_iter_end(self, batch, batch_results):
         if self.use_replay:
-            self.replay_memory.on_batch_end(*batch)
-        return results
+            indices_in_ds = batch[2]
+            corrects = batch_results["corrects"]
+            self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
+
+        super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
+        return
