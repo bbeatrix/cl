@@ -31,7 +31,7 @@ Pillow==9.0.0
 pkg-resources==0.0.0
 psutil==5.7.0
 py3nvml==0.2.6
-PyJWT==1.7.1
+PyJWT==2.4.0
 pykeops==1.4
 pyparsing==2.4.7
 pyrsistent==0.16.0
