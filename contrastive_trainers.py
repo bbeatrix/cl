@@ -1,5 +1,5 @@
-import gin
-import gin.torch
+#import gin
+#import gin.torch
 import neptune
 import numpy as np
 import torch
@@ -10,12 +10,12 @@ import losses, memories
 from trainers import Trainer, SupTrainer
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupContrastiveTrainer(SupTrainer): # SupTrainerWReplay
     CONTRAST_TYPES = ['simple', 'with_replay']
     MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
 
-    def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
+    def __init__(self, device, model, data, logdir, contrast_type='simple', separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
                  prototypes_mean_reduction=True, replay_memory_type="reservoir"):
         print('Supervised contrastive trainer.')
@@ -184,7 +184,7 @@ class SupContrastiveTrainer(SupTrainer): # SupTrainerWReplay
         return
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SimPresSupConTrainer(SupContrastiveTrainer):
 
     def __init__(self, device, model, data, logdir, sim_pres_weight=1000):
@@ -207,7 +207,7 @@ class SimPresSupConTrainer(SupContrastiveTrainer):
         return loss_mean
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class InterpolSupConTrainer(SupContrastiveTrainer):
 
     def __init__(self, device, model, data, logdir, interpol_loss_weight=1000, num_interpol_points=3, num_pairs=1,
@@ -276,7 +276,7 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
         return interpol_loss_mean
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class UnsupContrastiveTrainer(SupContrastiveTrainer):
     CONTRAST_TYPES = ['simple', 'with_replay', 'barlow_twins', 'barlow_twins_with_replay']
 

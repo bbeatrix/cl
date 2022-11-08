@@ -2,22 +2,22 @@ from collections import OrderedDict
 from functools import partial
 import os
 
-from absl import app
-import gin
+#from absl import app
+#import gin
 import timm
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchsummary import summary
+#from torchsummary import summary
 import torchvision as tv
 import torch.nn as nn
 from torch.nn.functional import relu, avg_pool2d
 
 
-@gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
+#@gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
 class Model():
-    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
+    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=None,
                  pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
         self.device = device
         self.input_shape = input_shape
@@ -43,7 +43,7 @@ class Model():
         self.model.to(self.device)
 
         print("Model summary:\n")
-        summary(self.model, self.input_shape)
+        #summary(self.model, self.input_shape)
         if self.model_path is not None and os.path.exists(self.model_path):
             self.load()
         return self.model
@@ -209,20 +209,20 @@ class SupConResNet(nn.Module):
         return self.encoder.features(x)
 
 
-@gin.configurable
+#@gin.configurable
 def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
     return SupConResNet(output_shape, head='mlp', feat_dim=emb_dim)
 
-@gin.configurable
+#@gin.configurable
 def reduced_resnet18(input_shape, output_shape, emb_dim, use_classifier_head, *args):
     return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, nf=20, bias=True)
 
-@gin.configurable
+#@gin.configurable
 def resnet18(input_shape, output_shape, use_claasifier_head, *args):
     return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, 64, True)
 
 
-@gin.configurable
+#@gin.configurable
 def vit_pretrained(input_shape, output_shape, *args, **kwargs):
     return VisionTransformer(input_shape, output_shape, *args, **kwargs)
 

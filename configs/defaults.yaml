@@ -1,0 +1,38 @@
+defaults:
+  - _self_
+  # you must specify the base config you want to run
+  - config: ???
+
+# By default, make hydra verbose
+hydra:
+  verbose: True
+
+config:
+    EXPERIMENT:
+        seed: 0
+        use_cuda: True
+        num_workers: 2
+        logdir: './outputs'
+        datadir: '~/datasets'
+        prefix: ''
+    DATA:
+        dataset_name: 'cifar10'
+        target_type: 'supervised'
+        batch_size: 64
+        augment: True
+        num_tasks: 1
+        num_cycles: 1
+    MODELS: 
+        model_class: resnet18
+        use_classifier_head: True
+    LOSSES:
+    TRAINERS:
+        iters: 10000
+        log_interval: 100
+    OPTIMIZER:
+        name: sgd
+        lr: 0.01
+        weight_decay: 0.000001
+        momentum: 0.9
+        nesterov: False
+

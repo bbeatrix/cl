@@ -1,8 +1,8 @@
 from abc import abstractmethod
 import os
 
-import gin
-import gin.torch
+#import gin
+#import gin.torch
 import neptune
 import numpy as np
 import torch
@@ -33,10 +33,10 @@ def trainer_maker(target_type, *args):
         raise NotImplementedError
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
-    def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED,
-                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR):
+    def __init__(self, device, model, data, logdir, log_interval=100, iters=1000,
+                 lr=0.001, wd=0.0, optimizer=torch.optim.SGD, lr_scheduler=MultiStepLR):
         self.device = device
         self.model = model
         self.data = data
@@ -205,7 +205,7 @@ class Trainer:
         return
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):
     def __init__(self, device, model, data, logdir):
         super().__init__(device, model, data, logdir)
@@ -238,7 +238,7 @@ class SupTrainer(Trainer):
         return results
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWForgetStats(SupTrainer):
     def __init__(self, device, model, data, logdir, log_score_freq=100):
         super().__init__(device, model, data, logdir)
@@ -304,11 +304,11 @@ class SupTrainerWForgetStats(SupTrainer):
         return
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+#@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
     MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
 
-    def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
+    def __init__(self, device, model, data, logdir, use_replay=False, memory_type="reservoir",
                  replay_memory_size=None, replay_batch_size=None):
         print('Supervised trainer.')
         super().__init__(device, model, data, logdir)

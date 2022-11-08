@@ -1,12 +1,12 @@
-import gin
-import gin.torch
+#import gin
+#import gin.torch
 import numpy as np
 import torch
 from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
 
 
-@gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
+#@gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
 class Data:
     TARGET_TYPES = ['supervised', 'supervised with forgetstats', 'supervised with replay',
                     'supervised contrastive', 'unsupervised contrastive', 'supcon with simpreserving',

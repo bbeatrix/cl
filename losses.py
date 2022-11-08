@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-import gin
-import gin.torch
+#import gin
+#import gin.torch
 from utils import off_diagonal
 
 
-@gin.configurable(denylist=['reduction'])
+#@gin.configurable(denylist=['reduction'])
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
@@ -105,7 +105,7 @@ class SupConLoss(nn.Module):
         return loss
 
 
-@gin.configurable(denylist=['device', 'batch_size', 'feat_dim'])
+#@gin.configurable(denylist=['device', 'batch_size', 'feat_dim'])
 class BarlowTwinsLoss(nn.Module):
     """Barlow Twins self-supervised loss: https://arxiv.org/pdf/2103.03230.pdf.
     """
