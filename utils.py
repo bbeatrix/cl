@@ -2,10 +2,10 @@ from ast import literal_eval
 from datetime import datetime
 from pydoc import locate
 
-import neptune
 import numpy as np
 import torch
 import torchvision as tv
+import wandb
 
 
 def gin_config_to_dict(gin_config):
@@ -23,7 +23,7 @@ def gin_config_to_dict(gin_config):
 
 def save_image(image, name, iteration, filename, normalize=True):
     tv.utils.save_image(image, filename, normalize=normalize)
-    neptune.log_image(name, x=iteration, y=filename)
+    wandb.log({name: filename}, step=iteration)
 
 def save_model(model, model_path):
     now = datetime.now()

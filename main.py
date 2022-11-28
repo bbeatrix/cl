@@ -5,9 +5,9 @@ from absl import app, flags
 import gin
 import gin.torch
 import gin.torch.external_configurables
-import neptune
 import numpy as np
 import torch
+import wandb
 
 import data
 import models
@@ -79,25 +79,27 @@ def main(argv):
     gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param, skip_unknown=True)
     print("Gin parameter bindings:\n{}".format(gin.config_str()))
 
-    use_neptune = "NEPTUNE_API_TOKEN" in os.environ
-    exp_id = ''
-
-    if use_neptune:
-        neptune.init(project_qualified_name='bbeatrix/scl')
-        exp = neptune.create_experiment(params=gin_config_to_dict(gin.config_str()),
-                                        name=FLAGS.gin_file[0].split('/')[-1][:-4],
-                                        upload_source_files=['./*.py'])
-        exp_id = exp.id
+    os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
+    if "WANDB_API_TOKEN" in os.environ:
+        wandb.init(project="cl", entity="bbea", reinit=True)
+        exp_logdir = wandb.run.dir[:-5]
+        exp_prefix = ""
     else:
-        neptune.init('shared/onboarding', 'ANONYMOUS', backend=neptune.OfflineBackend())
+        wandb.init(anonymous="allow")
+        exp_logdir = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
+        exp_prefix = wandb.run.id
 
-    neptune.log_text('gin_config', gin.config_str())
-    neptune.log_artifact(*FLAGS.gin_file, 'gin_config_{}.gin'.format(exp_id))
+    wandb.run.name = FLAGS.gin_file[0].split('/')[-1][:-4]
+    wandb.run.save()
 
-    exp_manager = ExperimentManager(prefix=exp_id)
+    wandb.config.update(gin_config_to_dict(gin.config_str()))
+    wandb.save(*FLAGS.gin_file)
+    wandb.run.log_code("./", include_fn=lambda path: path.endswith(".py"))
+
+    exp_manager = ExperimentManager(logdir=exp_logdir, prefix=exp_prefix)
     exp_manager.run_experiment()
 
-    neptune.stop()
+    wandb.finish()
     print("Fin")
 
 

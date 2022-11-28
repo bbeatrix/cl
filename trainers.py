@@ -3,10 +3,10 @@ import os
 
 import gin
 import gin.torch
-import neptune
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
+import wandb
 
 import losses, memories
 from utils import save_image, save_model
@@ -107,9 +107,7 @@ class Trainer:
                             iteration=self.global_iters,
                             filename=os.path.join(self.logdir, 'train_images.png'))
 
-            neptune.send_metric('learning_rate',
-                                x=self.global_iters,
-                                y=self.optimizer.param_groups[0]['lr'])
+            wandb.log({'learning_rate': self.optimizer.param_groups[0]['lr']}, step=self.global_iters)
 
             results_to_log = {'train_' + key: value for key, value in batch_results.items()
                               if torch.is_tensor(value) == True}
@@ -125,8 +123,7 @@ class Trainer:
                                     *[item.data for item in results_to_log.values()]))
 
             for metric, result in results_to_log.items():
-                neptune.send_metric(metric, x=self.global_iters, y=result)
-
+                wandb.log({metric: result}, step=self.global_iters)
             results_to_log = None
 
             self.test()
@@ -169,15 +166,13 @@ class Trainer:
                                       *[item.data for item in test_results.values()]))
 
                 for metric, result in test_results.items():
-                    neptune.send_metric(metric, x=self.global_iters, y=result)
+                    wandb.log({metric: result}, step=self.global_iters)
         return
 
     def _log_images(self, batch):
         train_images = self.data.inverse_normalize(batch[0]).permute(0, 2, 3, 1)
         for i in range(self.batch_size):
-            neptune.log_image('train images',
-                              train_images[i].detach().cpu().numpy(),
-                              image_name=str(batch[1][i].detach().cpu().numpy()))
+            wandb.log({str(batch[1][i].detach().cpu().numpy()): train_images[i].detach().cpu().numpy()}, step=self.global_iters)
         return
 
     def _log_avg_accuracy(self):
@@ -201,7 +196,8 @@ class Trainer:
 
             avg_accuracy /= (self.current_task + 1)
             print(f'\t Average accuracy after {self.current_task+1} task: ', avg_accuracy)
-            neptune.send_metric('avg accuracy', x=self.global_iters, y=avg_accuracy)
+
+            wandb.log({'average accuracy': avg_accuracy}, step=self.global_iters)
         return
 
 

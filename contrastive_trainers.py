@@ -1,17 +1,17 @@
 import gin
 import gin.torch
-import neptune
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torchvision import transforms as tfs
+import wandb
 
 import losses, memories
 from trainers import Trainer, SupTrainer
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
-class SupContrastiveTrainer(SupTrainer): # SupTrainerWReplay
+class SupContrastiveTrainer(SupTrainer):
     CONTRAST_TYPES = ['simple', 'with_replay']
     MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
 
@@ -171,16 +171,14 @@ class SupContrastiveTrainer(SupTrainer): # SupTrainerWReplay
     def log_images(self, batch):
         train_images = self.data.inverse_normalize(batch[0]).permute(0, 2, 3, 1)
         for i in range(self.batch_size):
-            neptune.log_image('train images',
-                              train_images[i].detach().cpu().numpy(),
-                              image_name=str(batch[1][i].detach().cpu().numpy()))
+            wandb.log({str(batch[1][i].detach().cpu().numpy()): train_images[i].detach().cpu().numpy()}, step=self.global_iters)
+
         if 'with_replay' in self.contrast_type and not self.replay_memory.empty():
             imgs, lbls = self.replay_memory.get_samples(self.batch_size)
             imgs = self.data.inverse_normalize(imgs).permute(0, 2, 3, 1)
             for i in range(self.batch_size):
-                neptune.log_image('replay images',
-                                  imgs[i].detach().cpu().numpy(),
-                                  image_name=str(lbls[i].item()))
+                wandb.log({str(lbls[i].item()): imgs[i].detach().cpu().numpy()}, step=self.global_iters)
+
         return
 
 
