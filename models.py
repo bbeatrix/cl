@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from functools import partial
+import logging
 import os
 
 from absl import app
@@ -42,23 +43,27 @@ class Model():
                                       self.freeze_top)
         self.model.to(self.device)
 
-        print("Model summary:\n")
+        logging.info("Model summary:\n")
         summary(self.model, self.input_shape)
+
         if self.model_path is not None and os.path.exists(self.model_path):
             self.load()
         return self.model
 
     def load(self):
-        print("Load model from {}.".format(self.model_path))
+        logging.info(f"Load model from {self.model_path}")
         loaded_state = torch.load(self.model_path)
         model_state = self.model.state_dict()
         loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
                         (model_state[k].shape == loaded_state[k].shape)}
         model_state.update(loaded_state)
         self.model.load_state_dict(model_state)
-        print("Model's state_dict:")
-        for param_tensor in self.model.state_dict():
-            print(param_tensor, "\t", self.model.state_dict()[param_tensor].size())
+        state_dict_str_list = [
+            f"\n{param_tensor} \t {self.model.state_dict()[param_tensor].size()}" \
+            for param_tensor in self.model.state_dict()
+        ]
+        state_dict_str = '\n'.join(state_dict_str_list)
+        logging.info(f"Model's state_dict: {state_dict_str}")
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -233,7 +238,7 @@ class VisionTransformer(nn.Module):
         super().__init__()
         self.base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained, num_classes=0)
         if emb_dim is not None:
-            print('Add extra embedding layer.')
+            logging.info('Add extra embedding layer.')
             self.emb = nn.Linear(self.base_model.num_feature, emb_dim)
             feat_dim = emb_dim
         else:
@@ -269,9 +274,9 @@ class VisionTransformer(nn.Module):
 
 def main(argv):
     model = resnet18((3, 32, 32), 100)
-    print("Model summary:\n")
+    logging.info("Model summary:\n")
     summary(model.cuda(), (3, 32, 32))
-    print("C'est un magnifique modèle!")
+    logging.info("C'est un magnifique modèle!")
 
 
 if __name__ == '__main__':

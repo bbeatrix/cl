@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import logging
 import os
 
 import gin
@@ -14,7 +15,7 @@ from utils import save_image, save_model
 
 def trainer_maker(target_type, *args):
     import contrastive_trainers
-    print(f'\ntarget type: {target_type}\n')
+    logging.info(f'\nTarget type: {target_type}\n')
     if target_type == 'supervised':
         return SupTrainer(*args)
     elif target_type == 'supervised with forgetstats':
@@ -70,7 +71,7 @@ class Trainer:
     def train(self):
         self.global_iters = 0
         self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
-        print("Start training.")
+        logging.info("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
             self.task_end = False
@@ -114,13 +115,13 @@ class Trainer:
 
             template = ("Task {}/{}x{}\tTrain\tglobal iter: {}, batch: {}/{}, metrics:  "
                         + "".join([key + ": {:.3f}  " for key in results_to_log.keys()]))
-            print(template.format(self.current_task + 1,
-                                    self.num_tasks,
-                                    self.num_cycles,
-                                    self.global_iters,
-                                    self.iter_count,
-                                    self.iters_per_task,
-                                    *[item.data for item in results_to_log.values()]))
+            logging.info(template.format(self.current_task + 1,
+                                         self.num_tasks,
+                                         self.num_cycles,
+                                         self.global_iters,
+                                         self.iter_count,
+                                         self.iters_per_task,
+                                         *[item.data for item in results_to_log.values()]))
 
             for metric, result in results_to_log.items():
                 wandb.log({metric: result}, step=self.global_iters)
@@ -158,12 +159,12 @@ class Trainer:
 
                 template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
                             + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
-                print(template.format(idx + 1,
-                                      self.num_tasks,
-                                      self.num_cycles,
-                                      self.global_iters,
-                                      float(self.global_iters) / self.iters * 100.,
-                                      *[item.data for item in test_results.values()]))
+                logging.info(template.format(idx + 1,
+                                             self.num_tasks,
+                                             self.num_cycles,
+                                             self.global_iters,
+                                             float(self.global_iters) / self.iters * 100.,
+                                             *[item.data for item in test_results.values()]))
 
                 for metric, result in test_results.items():
                     wandb.log({metric: result}, step=self.global_iters)
@@ -195,7 +196,7 @@ class Trainer:
                 avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
 
             avg_accuracy /= (self.current_task + 1)
-            print(f'\t Average accuracy after {self.current_task+1} task: ', avg_accuracy)
+            logging.info(f'\t Average accuracy after {self.current_task+1} task: {avg_accuracy}')
 
             wandb.log({'average accuracy': avg_accuracy}, step=self.global_iters)
         return
@@ -306,12 +307,12 @@ class SupTrainerWReplay(SupTrainer):
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None):
-        print('Supervised trainer.')
+        logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
 
         if self.use_replay:
-            print('Use replay from memory.')
+            logging.info('Use replay from memory.')
 
             err_message = "Replay memory type must be element of {}".format(self.MEMORY_TYPES)
             assert (memory_type in self.MEMORY_TYPES) == True, err_message

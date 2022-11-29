@@ -1,5 +1,6 @@
 from ast import literal_eval
 from datetime import datetime
+import logging
 from pydoc import locate
 
 import numpy as np
@@ -30,7 +31,7 @@ def save_model(model, model_path):
     dt_str = f"_datettime={now.strftime('%d%m%Y_%H%M%S')}"
     save_path = model_path + dt_str + '.torch'
     torch.save(model.state_dict(), save_path)
-    print("Saved model to {}.".format(save_path))
+    logging.info(f"Saved model to {save_path}.")
 
 
 def off_diagonal(x):

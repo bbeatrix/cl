@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import shutil
@@ -50,13 +51,13 @@ class ExperimentManager():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-        self.device = torch.device("cuda" if use_cuda else "cpu")
+        self.device = torch.device('cuda' if use_cuda else 'cpu')
 
         if use_cuda:
             self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
         else:
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
-        print("Device: {}".format(self.device))
+        logging.info(f"Device: {self.device}")
 
     def setup_trainer(self):
         self.data = data.Data(self.datadir,
@@ -77,8 +78,9 @@ class ExperimentManager():
 
 
 def main(argv):
+    logging.info("DÉBUT")
     gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param, skip_unknown=True)
-    print("Gin parameter bindings:\n{}".format(gin.config_str()))
+    logging.info(f"Gin config parameter bindings:\n{gin.config_str()}")
 
     os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
     if "WANDB_API_TOKEN" in os.environ:
@@ -103,7 +105,7 @@ def main(argv):
     wandb.finish()
     if "WANDB_API_TOKEN" in os.environ:
         shutil.rmtree(exp_logdir)
-    print("Fin")
+    logging.info("FIN")
 
 
 if __name__ == '__main__':

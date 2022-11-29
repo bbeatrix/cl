@@ -1,5 +1,7 @@
-import os
+import logging
 import itertools
+import os
+
 import gin
 import gin.torch
 from absl import flags, app
@@ -8,7 +10,7 @@ import main
 
 @gin.configurable
 def descartes_builder(name='out', params=[]):
-    print("Building grid search with parameters: ", params)
+    logging.info(f"Building grid search with parameters: {params}")
 
     directory = os.path.join('configs', 'grids', name)
     if not os.path.exists(directory):
@@ -42,7 +44,7 @@ def descartes_builder(name='out', params=[]):
 
 def main(argv):
     gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param, skip_unknown=True)
-    print("Gin parameter bindings:\n{}".format(gin.config_str()))
+    logging.info(f"Gin parameter bindings:\n{gin.config_str()}")
 
     descartes_builder()
 

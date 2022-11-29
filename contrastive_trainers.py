@@ -1,3 +1,4 @@
+import logging
 import gin
 import gin.torch
 import numpy as np
@@ -18,7 +19,7 @@ class SupContrastiveTrainer(SupTrainer):
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
                  prototypes_mean_reduction=True, replay_memory_type="reservoir"):
-        print('Supervised contrastive trainer.')
+        logging.info('Supervised contrastive trainer.')
         super().__init__(device, model, data, logdir)
         self.loss_function = losses.SupConLoss(reduction='none')
         self.view_transforms = self.create_view_transforms()
@@ -30,7 +31,7 @@ class SupContrastiveTrainer(SupTrainer):
         assert (contrast_type in self.CONTRAST_TYPES) == True, err_message
 
         if 'with_replay' in self.contrast_type:
-            print('Use replay from memory.')
+            logging.info('Use replay from memory.')
             err_message = "Parameter value must be set in config file"
             assert (replay_memory_size is not None) == True, err_message
             assert (replay_batch_size is not None) == True, err_message
@@ -44,7 +45,7 @@ class SupContrastiveTrainer(SupTrainer):
            
             self.replay_memory = self.init_replay_memory()
 
-        print('Use prototypes for prediction.')
+        logging.info('Use prototypes for prediction.')
         if not self.separate_memories and 'with_replay' in self.contrast_type:
             self.prototype_memory = self.replay_memory
         else:
@@ -186,7 +187,7 @@ class SupContrastiveTrainer(SupTrainer):
 class SimPresSupConTrainer(SupContrastiveTrainer):
 
     def __init__(self, device, model, data, logdir, sim_pres_weight=1000):
-        print('Supervised contrastive trainer using similarity preserving constraint.')
+        logging.info('Supervised contrastive trainer using similarity preserving constraint.')
         super().__init__(device, model, data, logdir)
         self.sim_pres_weight = sim_pres_weight
         self.prototype_manager = SimPresPrototypeManager(self.model,
@@ -200,7 +201,7 @@ class SimPresSupConTrainer(SupContrastiveTrainer):
 
         sim_diff = self.prototype_manager.similarity_matrix_curr - self.prototype_manager.similarity_matrix_prev
         sim_pres_loss_mean = torch.mean((sim_diff)**2).squeeze()
-        print(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {sim_pres_loss_mean}')
+        logging.info(f'Classification loss mean: {loss_mean} \t rehearsal loss mean: {sim_pres_loss_mean}')
         loss_mean += self.sim_pres_weight * sim_pres_loss_mean
         return loss_mean
 
@@ -210,13 +211,13 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
 
     def __init__(self, device, model, data, logdir, interpol_loss_weight=1000, num_interpol_points=3, num_pairs=1,
                  sim_type='cos'):
-        print('Supervised contrastive trainer using interpolation constraint.')
+        logging.info('Supervised contrastive trainer using interpolation constraint.')
         super().__init__(device, model, data, logdir)
         self.interpol_loss_weight = interpol_loss_weight
         self.num_interpol_points = num_interpol_points
         self.num_pairs = num_pairs
         self.sim_type = sim_type
-        print('Sim type: ', self.sim_type)
+        logging.info('Sim type: ', self.sim_type)
 
         assert 3 <= num_interpol_points, "Number of interpolation points must be greater than or equal to 3."
 
@@ -228,7 +229,7 @@ class InterpolSupConTrainer(SupContrastiveTrainer):
             start_img, end_img = self._get_image_pair(input_images)
             interpol_loss.append(self.calc_interpol_loss(start_img, end_img, sim_type=self.sim_type))
         interpol_loss_mean = torch.stack(interpol_loss).mean()
-        print(f'Classification loss mean: {loss_mean} \t interpol loss mean: {interpol_loss_mean}')
+        logging.info(f'Classification loss mean: {loss_mean} \t interpol loss mean: {interpol_loss_mean}')
 
         loss_mean += self.interpol_loss_weight * interpol_loss_mean
         return loss_mean
@@ -334,7 +335,7 @@ class PrototypeManager:
 
 
     def _update_prototypes(self):
-        print('Update prototypes.')
+        logging.info('Update prototypes.')
         p = []
         pl = []
 

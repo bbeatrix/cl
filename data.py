@@ -1,3 +1,4 @@
+import logging
 import gin
 import gin.torch
 import numpy as np
@@ -45,14 +46,14 @@ class Data:
 
 
     def _get_dataset(self):
-        print("Loading {} dataset from {}.".format(self.dataset_name, self.datadir))
+        logging.info(f"Loading {self.dataset_name} dataset from {self.datadir}.")
 
         image_transforms = [tfs.ToTensor()]
         self.inverse_normalize = torch.nn.Identity()
         augment_transforms = []
 
         if self.augment:
-            print("Using augmentation on train dataset.")
+            logging.info("Using augmentation on train dataset.")
             self.input_shape = (3, self.image_size, self.image_size)
 
             if self.apply_vit_transforms is True:
@@ -109,7 +110,7 @@ class Data:
 
         if self.num_tasks > 1:
             if self.tasks_random_splits:
-                print("Splitting training dataset into {} random parts.".format(self.num_tasks))
+                logging.info(f"Splitting training dataset into {self.num_tasks} random parts.")
                 indices_permutation = np.random.permutation(len(self.train_dataset))
                 err_message =  "Number of tarining examples should be divisible by the number of tasks."
                 assert len(self.train_dataset) % self.num_tasks == 0, err_message
@@ -123,9 +124,9 @@ class Data:
                                                             split_indices)
                     self.train_task_datasets.append(train_ds_subset)
                     self.test_task_datasets.append(self.test_dataset)
-                print("\n num train tasks: ", len(self.train_task_datasets))
+                logging.info("Number of train tasks: ", len(self.train_task_datasets))
                 return
-            print("Splitting training and test datasets into {} parts for cl.".format(self.num_tasks))
+            logging.info(f"Splitting training and test datasets into {self.num_tasks} parts for cl.")
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
             self.labels = np.unique(train_targets)
@@ -161,7 +162,7 @@ class Data:
         self.num_classes = (self.num_classes,)
         _collate_func = default_collate
 
-        print("Creating train and test data loaders.")
+        logging.info("Creating train and test data loaders.")
         self.train_loaders, self.test_loaders = [], []
 
         for ds in self.train_task_datasets:
