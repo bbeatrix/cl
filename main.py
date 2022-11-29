@@ -1,5 +1,6 @@
 import os
 import random
+import shutil
 
 from absl import app, flags
 import gin
@@ -100,6 +101,8 @@ def main(argv):
     exp_manager.run_experiment()
 
     wandb.finish()
+    if "WANDB_API_TOKEN" in os.environ:
+        shutil.rmtree(exp_logdir)
     print("Fin")
 
 
