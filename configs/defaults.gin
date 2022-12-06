@@ -1,0 +1,38 @@
+ExperimentManager.seed = 0
+ExperimentManager.no_cuda = False
+ExperimentManager.num_workers = 2
+ExperimentManager.prefix = '' 
+ExperimentManager.logdir = './outputs'
+ExperimentManager.datadir = '../datasets'
+
+
+Data.target_type = 'supervised'
+Data.dataset_name = 'cifar10'
+Data.image_size = 32
+Data.batch_size = 64
+Data.augment = True
+Data.apply_vit_transforms=False
+Data.num_tasks = 1
+Data.num_cycles = 1
+Data.tasks_random_splits=False
+
+
+Model.model_class = @models.resnet18
+Model.model_path = None
+Model.pretrained = True
+Model.freeze_base = False
+Model.freeze_top = False
+Model.emb_dim = None
+Model.use_classifier_head = True
+
+
+Trainer.log_interval = 100
+Trainer.iters = 10000
+Trainer.lr = 0.01
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.lr_scheduler=@torch.optim.lr_scheduler.MultiStepLR
+
+torch.optim.SGD.momentum = 0.9
+torch.optim.SGD.nesterov = True
+torch.optim.lr_scheduler.MultiStepLR.milestones = []
