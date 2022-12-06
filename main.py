@@ -52,12 +52,18 @@ class ExperimentManager():
         torch.backends.cudnn.deterministic = True
 
         self.device = torch.device('cuda' if use_cuda else 'cpu')
+        logging.info(f"Device: {self.device}")
+
+        # Additional info when using cuda
+        if self.device.type == 'cuda':
+            logging.info(f"Device name: {torch.cuda.get_device_name()}")
+            logging.info(f"Allocated memory: {round(torch.cuda.memory_allocated()/1024**3,1)} GB")
+            logging.info(f"Cached memory: {round(torch.cuda.memory_reserved()/1024**3,1)} GB")
 
         if use_cuda:
             self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
         else:
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
-        logging.info(f"Device: {self.device}")
 
     def setup_trainer(self):
         self.data = data.Data(self.datadir,
