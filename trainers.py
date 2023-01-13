@@ -4,13 +4,15 @@ import os
 
 import gin
 import gin.torch
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
+import torchvision
 import wandb
 
 import losses, memories
-from utils import save_image, save_model
+import utils
 
 
 def trainer_maker(target_type, *args):
@@ -103,10 +105,10 @@ class Trainer:
             self._log_images(batch)
 
             if self.logdir is not None:
-                save_image(batch[0][:self.batch_size, :, :, :],
-                            name='train_images',
-                            iteration=self.global_iters,
-                            filename=os.path.join(self.logdir, 'train_images.png'))
+                utils.save_image(batch[0][:self.batch_size, :, :, :],
+                                 name='train_images',
+                                 iteration=self.global_iters,
+                                 filename=os.path.join(self.logdir, 'train_images.png'))
 
             wandb.log({'learning_rate': self.optimizer.param_groups[0]['lr']}, step=self.global_iters)
 
@@ -131,9 +133,9 @@ class Trainer:
         return
 
     def on_task_end(self):
-        save_model(self.model,
-                    os.path.join(self.logdir,
-                                f"model_task={self.current_task}_globaliter={self.global_iters}"))
+        utils.save_model(self.model,
+                         os.path.join(self.logdir,
+                                      f"model_task={self.current_task}_globaliter={self.global_iters}"))
         self.test()
         self._log_avg_accuracy()
 
@@ -171,9 +173,12 @@ class Trainer:
         return
 
     def _log_images(self, batch):
-        train_images = self.data.inverse_normalize(batch[0]).permute(0, 2, 3, 1)
-        for i in range(self.batch_size):
-            wandb.log({str(batch[1][i].detach().cpu().numpy()): train_images[i].detach().cpu().numpy()}, step=self.global_iters)
+        train_images = self.data.inverse_normalize(batch[0])
+        image_grid = torchvision.utils.make_grid(train_images)
+        ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
+        plt.axis('off')
+        fig = plt.gcf()
+        wandb.log({"train image batch": fig})
         return
 
     def _log_avg_accuracy(self):
@@ -293,6 +298,8 @@ class SupTrainerWForgetStats(SupTrainer):
         self.update_forget_stats(indices_in_ds, corrects)
         if self.global_iters % self.log_score_freq == 0:
             self.save_forget_scores()
+            fs_hist = utils.plot_forget_scores(self.forget_scores, self.current_task, self.global_iters)
+            wandb.log({"forget scores histogram": wandb.Image(fs_hist)})
         return
 
     def on_task_end(self):
