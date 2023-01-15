@@ -91,7 +91,7 @@ def main(argv):
     os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
     if "WANDB_API_TOKEN" in os.environ:
         wandb.init(project="cl", entity="bbea", reinit=True)
-        exp_logdir = wandb.run.dir[:-5]
+        exp_logdir = wandb.run.dir
         exp_prefix = ""
     else:
         wandb.init(anonymous="allow")
