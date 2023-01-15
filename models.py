@@ -66,6 +66,37 @@ class Model():
         logging.info(f"Model's state_dict: {state_dict_str}")
 
 
+class SimpleCNN(nn.Module):
+    def __init__(self, output_shape, use_bias=True, width=1):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32 * width, kernel_size=3, stride=2)
+        self.conv2 = nn.Conv2d(32 * width, 64 * width, kernel_size=3, stride=2)
+        self.conv3 = nn.Conv2d(64 * width, 128 * width, kernel_size=3, stride=2)
+        self.relu = nn.ReLU()
+
+        self.heads = nn.ModuleList()
+        for i in range(len(output_shape)):
+            new_head = nn.Linear(1152, output_shape[i], bias=use_bias)
+            self.heads.append(new_head)
+
+    def features(self, x):
+        out = self.relu(self.conv1(x))
+        out = self.relu(self.conv2(out))
+        out = self.relu(self.conv3(out))
+        out = out.view(out.size(0), -1)
+        return out
+
+    def forward(self, x):
+        out = self.features(x)
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        if len(outputs) > 1:
+            return outputs
+        else:
+            return outputs[0]
+
+
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
@@ -226,6 +257,9 @@ def reduced_resnet18(input_shape, output_shape, emb_dim, use_classifier_head, *a
 def resnet18(input_shape, output_shape, use_claasifier_head, *args):
     return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, 64, True)
 
+@gin.configurable
+def simplecnn(input_shape, output_shape, use_claasifier_head, *args):
+    return SimpleCNN(output_shape, width=1, use_bias=True)
 
 @gin.configurable
 def vit_pretrained(input_shape, output_shape, *args, **kwargs):
