@@ -69,20 +69,39 @@ class Model():
 class SimpleCNN(nn.Module):
     def __init__(self, output_shape, use_bias=True, width=1):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32 * width, kernel_size=3, stride=2)
-        self.conv2 = nn.Conv2d(32 * width, 64 * width, kernel_size=3, stride=2)
-        self.conv3 = nn.Conv2d(64 * width, 128 * width, kernel_size=3, stride=2)
+        self.conv1 = nn.Conv2d(3, 32 * width, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(32 * width, 64 * width, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(64 * width, 128 * width, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
+        self.bn1 = nn.BatchNorm2d(32 * width)
+        self.bn2 = nn.BatchNorm2d(64 * width)
+        self.bn3 = nn.BatchNorm2d(128 * width)
+        self.maxpool1 = nn.MaxPool2d(kernel_size=3, stride=2)
+        self.maxpool2 = nn.MaxPool2d(kernel_size=3, stride=2)
+        self.shortcut1 = nn.Sequential(
+            nn.Conv2d(32 * width, 64 * width, kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(64 * width),
+            nn.ReLU()
+        )
+        self.shortcut2 = nn.Sequential(
+            nn.Conv2d(64 * width, 128 * width, kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(128 * width),
+            nn.ReLU()
+        )
 
         self.heads = nn.ModuleList()
         for i in range(len(output_shape)):
-            new_head = nn.Linear(1152, output_shape[i], bias=use_bias)
+            new_head = nn.Linear(128 * width * 49, output_shape[i], bias=use_bias)
             self.heads.append(new_head)
 
     def features(self, x):
-        out = self.relu(self.conv1(x))
-        out = self.relu(self.conv2(out))
-        out = self.relu(self.conv3(out))
+        out1 = self.relu(self.bn1(self.conv1(x)))
+        out1 = self.maxpool1(out1)
+        out2 = self.relu(self.bn2(self.conv2(out1)))
+        out2 = out2.clone() + self.shortcut1(out1)
+        out2 = self.maxpool2(out2)
+        out3 = self.relu(self.bn3(self.conv3(out2)))
+        out = out3.clone() + self.shortcut2(out2)
         out = out.view(out.size(0), -1)
         return out
 
@@ -258,8 +277,8 @@ def resnet18(input_shape, output_shape, use_claasifier_head, *args):
     return ResNet(BasicBlock, [2, 2, 2, 2], output_shape, 64, True)
 
 @gin.configurable
-def simplecnn(input_shape, output_shape, use_claasifier_head, *args):
-    return SimpleCNN(output_shape, width=1, use_bias=True)
+def simplecnn(input_shape, output_shape, use_claasifier_head, width=1, use_bias=True, *args):
+    return SimpleCNN(output_shape, width=width, use_bias=use_bias)
 
 @gin.configurable
 def vit_pretrained(input_shape, output_shape, *args, **kwargs):
