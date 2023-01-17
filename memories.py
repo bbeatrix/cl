@@ -166,7 +166,6 @@ class ForgettablesMemory(Memory):
             idx = np.argmin(self.content["forget_scores"])
             self._remove_idx_with_target(idx, update_target)
             self._update_content_at_idx(update_image, update_target, idx, update_forget_score)
-            self.size += 1
         return
 
     def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
