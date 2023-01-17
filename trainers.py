@@ -393,7 +393,23 @@ class SupTrainerWReplay(SupTrainer):
                    'corrects': corrects}
         return results
 
+    def _log_replay_memory_images(self):
+        replay_images, replay_target = self.replay_memory.get_samples(max(self.replay_memory_size, 500))
+        replay_images = self.data.inverse_normalize(replay_images.detach().cpu())
+        image_grid = torchvision.utils.make_grid(replay_images)
+        ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
+        plt.axis('off')
+        fig = plt.gcf()
+        wandb.log({"replay memory content": fig})
+        return
+
     def on_iter_end(self, batch, batch_results):
+        is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
+        if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
+            if  not self.replay_memory.empty():
+                self._log_replay_memory_images()
+            else:
+                logging.info("Replay memory is currently empty.")
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
