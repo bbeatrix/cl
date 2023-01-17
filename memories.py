@@ -36,11 +36,11 @@ class Memory:
     def get_samples(self, sample_size, target=None):
         if target is None:
             sample_size = min(self.size, sample_size)
-            selected_indices = np.random.choice(range(self.size), sample_size)
+            selected_indices = np.random.choice(range(self.size), sample_size, replace=False)
         else:
             indices = self.target2indices[target]
             sample_size = min(sample_size, len(indices))
-            selected_indices = np.random.choice(indices, sample_size)
+            selected_indices = np.random.choice(indices, sample_size, replace=False)
 
         sample_images = self.content['images'][selected_indices]
         sample_targets = self.content['targets'][selected_indices]
