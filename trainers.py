@@ -202,7 +202,6 @@ class Trainer:
 
             avg_accuracy /= (self.current_task + 1)
             logging.info(f'\t Average accuracy after {self.current_task+1} task: {avg_accuracy}')
-
             wandb.log({'average accuracy': avg_accuracy}, step=self.global_iters)
         return
 
@@ -410,6 +409,11 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_replay_memory_images()
             else:
                 logging.info("Replay memory is currently empty.")
+            if self.memory_type == "forgettables":
+                fs_hist = utils.plot_forget_scores(self.replay_memory.global_forget_scores, self.current_task, self.global_iters)
+                wandb.log({"forget scores histogram": wandb.Image(fs_hist)})
+                fs_hist = utils.plot_forget_scores(self.replay_memory.content["forget_scores"], self.current_task, self.global_iters)
+                wandb.log({"memory content forget scores histogram": wandb.Image(fs_hist)})
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
