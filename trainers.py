@@ -38,7 +38,7 @@ def trainer_maker(target_type, *args):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
-    def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED,
+    def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR):
         self.device = device
         self.model = model
@@ -50,6 +50,7 @@ class Trainer:
         self.test_loaders = data.loaders['test_loaders']
         self.log_interval = log_interval
         self.iters = iters
+        self.epochs_per_task = epochs_per_task
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -80,7 +81,10 @@ class Trainer:
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
-
+            if self.epochs_per_task is not None:
+                epochs2iters_per_task = self.epochs_per_task * len(current_train_loader)
+                assert (epochs2iters_per_task * self.num_tasks * self.num_cycles == self.iters)
+                self.iters_per_task = epochs2iters_per_task
             for self.iter_count in range(1, self.iters_per_task + 1):
                 self.model.train()
                 self.global_iters += 1
