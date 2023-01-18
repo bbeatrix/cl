@@ -47,6 +47,6 @@ def plot_forget_scores(fs, task, globaliters, bins=20):
     fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
     axs.hist(fs, bins=bins)
     plt.title(f"Forget scores at {globaliters} steps, task {task}")
-    plt.xlabel("Number of forgetting events occured")
+    plt.xlabel("Number of forgetting events occurred")
     plt.ylabel("Number of training samples")
     return fig
