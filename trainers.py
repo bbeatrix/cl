@@ -202,7 +202,7 @@ class Trainer:
 
             avg_accuracy /= (self.current_task + 1)
             logging.info(f'\t Average accuracy after {self.current_task+1} task: {avg_accuracy}')
-            wandb.log({'average accuracy': avg_accuracy}, step=self.global_iters)
+            wandb.log({'average accuracy': avg_accuracy})
         return
 
 
@@ -299,6 +299,12 @@ class SupTrainerWForgetStats(SupTrainer):
             self.save_forget_scores()
             fs_hist = utils.plot_forget_scores(self.forget_scores, self.current_task, self.global_iters)
             wandb.log({"forget scores histogram": wandb.Image(fs_hist)})
+            fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
+                       "count corrects": sum(corrects),
+                       "count never_correct": len(self.forget_stats["never_correct"])}
+
+            logging.info((", ").join([f"{k}: {v}" for k, v in fs_dict.items()]))
+            wandb.log({k: v for k, v in fs_dict.items()})
         return
 
     def on_task_end(self):
