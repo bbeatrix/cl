@@ -12,20 +12,22 @@ class Memory:
         self.target2indices = {}
         self.content = {
             'images': torch.zeros((self.size_limit, *image_shape), device=device),
-            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device)
+            'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device),
+            'indices_in_ds': [None] * self.size_limit,
         }
 
     @abstractmethod
-    def _update_with_item(self, update_image, updat_target):
+    def _update_with_item(self, update_image, updat_target, update_index_in_ds):
         return
 
-    def on_batch_end(self, update_images, update_targets, *args):
+    def on_batch_end(self, update_images, update_targets, indices_in_ds, *args):
         for i in range(update_images.shape[0]):
-            self._update_with_item(update_images[i], update_targets[i])
+            self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
 
-    def _update_content_at_idx(self, update_image, update_target, idx):
+    def _update_content_at_idx(self, update_image, update_target, index_in_ds, idx):
         self.content['images'][idx] = update_image
         self.content['targets'][idx] = update_target
+        self.content['indices_in_ds'][idx] = index_in_ds
 
         update_target_value = update_target.item()
         if update_target_value in self.target2indices.keys():
@@ -65,38 +67,54 @@ class ReservoirMemory(Memory):
         old_target = self.content['targets'][idx].item()
         self.target2indices[old_target].remove(idx)
 
-    def _update_with_item(self, update_image, update_target):
-        if self.size < self.size_limit:
+    def _update_with_item(self, update_image, update_target, update_index_in_ds):
+        if self.size < self.size_limit and update_index_in_ds not in self.content["indices_in_ds"]:
             idx = self.size
-            self._update_content_at_idx(update_image, update_target, idx)
+            self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
             self.size += 1
         else:
             # memory is full.
             m = random.randrange(self.num_seen_images_in_stream)
-            if m < self.size_limit:
+            if m < self.size_limit and update_index_in_ds not in self.content["indices_in_ds"]:
                 # Put it in
                 idx = m
                 self._remove_idx_with_target(idx, update_target)
-                self._update_content_at_idx(update_image, update_target, idx)
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
         self.num_seen_images_in_stream += 1
 
 
 class FixedMemory(Memory):
-    def __init__(self, image_shape, target_shape, device, size_limit, size_limit_per_target):
+    def __init__(self, image_shape, target_shape, device, size_limit):
         super().__init__(image_shape, target_shape, device, size_limit)
 
-        self.size_limit_per_target = size_limit_per_target
         self.size_per_target = {}
+        self.size_limit_per_target = self.size_limit
 
-    def _update_with_item(self, update_image, update_target):
+    def get_index_of_replace(self):
+        for target, size in self.size_per_target.items():
+            if size > self.size_limit_per_target:
+                idx = self.target2indices[target][0]
+                self.target2indices[target].pop(0)
+                self.size_per_target[target] -= 1
+                return idx
+        return
+
+    def _update_with_item(self, update_image, update_target, update_index_in_ds):
         target_value = update_target.item()
         if target_value not in self.size_per_target.keys():
             self.size_per_target[target_value] = 0
+            self.size_limit_per_target = self.size_limit // len(self.size_per_target)
         if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
-            idx = self.size
-            self._update_content_at_idx(update_image, update_target, idx)
-            self.size += 1
-            self.size_per_target[target_value] += 1
+            if update_index_in_ds not in self.content["indices_in_ds"]:
+                idx = self.size
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+                self.size += 1
+                self.size_per_target[target_value] += 1
+        elif self.size_per_target[target_value] < self.size_limit_per_target:
+            if update_index_in_ds not in self.content["indices_in_ds"]:
+                idx = self.get_index_of_replace()
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+                self.size_per_target[target_value] += 1
 
 
 class ForgettablesMemory(Memory):

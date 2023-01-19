@@ -350,22 +350,18 @@ class SupTrainerWReplay(SupTrainer):
                 size_limit=self.replay_memory_size
             )
         elif self.memory_type == "fixed":
-            self.replay_memory_size_per_target = self.replay_memory_size // self.data.num_classes[0]
             self.replay_memory = memories.FixedMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
-                size_limit_per_target=self.replay_memory_size_per_target
             )
         elif self.memory_type == "forgettables":
-            self.replay_memory_size_per_target = self.replay_memory_size // self.data.num_classes[0]
             self.replay_memory = memories.ForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
-                size_limit_per_target=self.replay_memory_size_per_target,
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
