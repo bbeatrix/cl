@@ -409,11 +409,23 @@ class SupTrainerWReplay(SupTrainer):
         wandb.log({"replay memory content": fig})
         return
 
+    def _log_replay_memory_class_distribution(self):
+        fig = plt.figure(figsize = (10, 5))
+        classes = list(self.replay_memory.target2indices.keys())
+        counts = [len(indices) for indices in self.replay_memory.target2indices.values()]
+        plt.bar(classes, counts, color ='maroon', width=0.2)
+        plt.xlabel("Classes in memory")
+        plt.ylabel("Number of images")
+        plt.title("Class distribution of images in replay memory")
+        wandb.log({"replay memory class distribution": wandb.Image(fig)})
+        return
+
     def on_iter_end(self, batch, batch_results):
         is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
-            if  not self.replay_memory.empty():
+            if not self.replay_memory.empty():
                 self._log_replay_memory_images()
+                self._log_replay_memory_class_distribution()
             else:
                 logging.info("Replay memory is currently empty.")
             if self.memory_type == "forgettables":
