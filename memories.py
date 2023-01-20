@@ -117,11 +117,10 @@ class FixedMemory(Memory):
                 self.size_per_target[target_value] += 1
 
 
-class PrecomputedScoresMemory(FixedMemory):
+class PrecomputedScoresRankMemory(FixedMemory):
     def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path):
         super().__init__(image_shape, target_shape, device, size_limit)
 
-        precomputed_scores_path = f"~/cl/data/cifar10_train_precomputedfs_task=0_epoch=200.npy"
         self.precomputed_scores = np.load(precomputed_scores_path)
         self.min_score_in_content = -np.inf
         self.min_score_idx_in_content = -1
@@ -148,8 +147,9 @@ class PrecomputedScoresMemory(FixedMemory):
                 self._update_content_at_idx(update_image, update_target, update_index_in_ds, self.min_score_idx_in_content)
                 self.size_per_target[update_target.item()] += 1
 
-        self.min_score_in_content = np.min(self.precomputed_scores[self.content["indices_in_ds"]])
-        self.min_score_idx_in_content = np.argmin(self.precomputed_scores[self.content["indices_in_ds"]])
+        content_indices_in_ds = self.content["indices_in_ds"][self.content["indices_in_ds"] != None]
+        self.min_score_in_content = np.min(self.precomputed_scores[content_indices_in_ds])
+        self.min_score_idx_in_content = np.argmin(self.precomputed_scores[content_indices_in_ds])
         return
 
 

@@ -12,7 +12,7 @@ import wandb
 
 def gin_config_to_dict(gin_config):
     params = {}
-    for item in gin_config.split("\n"):
+    for item in gin_config.replace("\\\n    ", "").split("\n"):
         if ' = ' in item:
             key, value = item.split(' = ')
             if locate(value) is not None:

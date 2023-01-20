@@ -320,10 +320,10 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
-                 replay_memory_size=None, replay_batch_size=None):
+                 replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -340,6 +340,7 @@ class SupTrainerWReplay(SupTrainer):
             self.memory_type = memory_type
             self.replay_memory_size = replay_memory_size
             self.replay_batch_size = replay_batch_size
+            self.precomputed_scores_path = precomputed_scores_path
             self.init_memory()
 
     def init_memory(self):
@@ -356,6 +357,16 @@ class SupTrainerWReplay(SupTrainer):
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
+            )
+        elif self.memory_type == "scorerank":
+            err_message = "Parameter value must be set in config file"
+            assert (self.precomputed_scores_path is not None) == True, err_message
+            self.replay_memory = memories.PrecomputedScoresRankMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                precomputed_scores_path=self.precomputed_scores_path,
             )
         elif self.memory_type == "forgettables":
             self.replay_memory = memories.ForgettablesMemory(
