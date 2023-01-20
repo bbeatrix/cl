@@ -117,6 +117,42 @@ class FixedMemory(Memory):
                 self.size_per_target[target_value] += 1
 
 
+class PrecomputedScoresMemory(FixedMemory):
+    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path):
+        super().__init__(image_shape, target_shape, device, size_limit)
+
+        precomputed_scores_path = f"~/cl/data/cifar10_train_precomputedfs_task=0_epoch=200.npy"
+        self.precomputed_scores = np.load(precomputed_scores_path)
+        self.min_score_in_content = -np.inf
+        self.min_score_idx_in_content = -1
+
+    def get_index_of_replace(self):
+        for target, size in self.size_per_target.items():
+            if size > self.size_limit_per_target:
+                scores = self.precomputed_scores[self.target2indices[target]]
+                min_score_idx = np.argmin(scores)
+                idx = self.target2indices[target][min_score_idx]
+                self.target2indices[target].pop(min_score_idx)
+                self.size_per_target[target] -= 1
+                return idx
+        return
+
+    def _update_with_item(self, update_image, update_target, update_index_in_ds):
+        super()._update_with_item(update_image, update_target, update_index_in_ds)
+        
+        if update_index_in_ds not in self.content["indices_in_ds"]:
+            if self.min_score_in_content < self.precomputed_scores[update_index_in_ds]:
+                old_target = self.content["targets"][self.min_score_idx_in_content].item()
+                self.target2indices[old_target].pop(self.min_score_idx_in_content)
+                self.size_per_target[old_target] -= 1
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, self.min_score_idx_in_content)
+                self.size_per_target[update_target.item()] += 1
+
+        self.min_score_in_content = np.min(self.precomputed_scores[self.content["indices_in_ds"]])
+        self.min_score_idx_in_content = np.argmin(self.precomputed_scores[self.content["indices_in_ds"]])
+        return
+
+
 class ForgettablesMemory(Memory):
     def __init__(self, image_shape, target_shape, device, size_limit, size_limit_per_target, num_train_examples,
                  logdir, log_score_freq=100):
