@@ -83,7 +83,8 @@ class Trainer:
             results_to_log = None
             if self.epochs_per_task is not None:
                 epochs2iters_per_task = self.epochs_per_task * len(current_train_loader)
-                assert (epochs2iters_per_task * self.num_tasks * self.num_cycles == self.iters)
+                err_message = f"{self.epochs_per_task} * {len(current_train_loader)} should be equal to {self.iters_per_task}"
+                assert (epochs2iters_per_task == self.iters_per_task), err_message
                 self.iters_per_task = epochs2iters_per_task
             for self.iter_count in range(1, self.iters_per_task + 1):
                 self.model.train()
