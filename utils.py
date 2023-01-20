@@ -40,13 +40,3 @@ def off_diagonal(x):
     n, m = x.shape
     assert n == m
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
-
-def plot_forget_scores(fs, task, globaliters, bins=20):
-    if sum(np.isinf(fs)) > 0:
-        fs[fs == np.inf] = -1
-    fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-    axs.hist(fs, bins=bins)
-    plt.title(f"Forget scores at {globaliters} steps, task {task}")
-    plt.xlabel("Number of forgetting events occurred")
-    plt.ylabel("Number of training samples")
-    return fig

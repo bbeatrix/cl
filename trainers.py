@@ -107,7 +107,7 @@ class Trainer:
         is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
 
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
-            self._log_images(batch)
+            self._log_train_images(batch)
 
             if self.logdir is not None:
                 utils.save_image(batch[0][:self.batch_size, :, :, :],
@@ -177,13 +177,14 @@ class Trainer:
                     wandb.log({metric: result}, step=self.global_iters)
         return
 
-    def _log_images(self, batch):
+    def _log_train_images(self, batch):
         train_images = self.data.inverse_normalize(batch[0])
         image_grid = torchvision.utils.make_grid(train_images)
         ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
         plt.axis('off')
         fig = plt.gcf()
         wandb.log({"train image batch": fig})
+        plt.close()
         return
 
     def _log_avg_accuracy(self):
@@ -302,8 +303,8 @@ class SupTrainerWForgetStats(SupTrainer):
         self.update_forget_stats(indices_in_ds, corrects)
         if self.global_iters % self.log_score_freq == 0:
             self.save_forget_scores()
-            fs_hist = utils.plot_forget_scores(self.forget_scores, self.current_task, self.global_iters)
-            wandb.log({"forget scores histogram": wandb.Image(fs_hist)})
+            self._log_forget_scores_hist(self.forget_scores, self.current_task, self.global_iters)
+            
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
                        "count corrects": sum(corrects),
                        "count never_correct": len(self.forget_stats["never_correct"])}
@@ -315,6 +316,18 @@ class SupTrainerWForgetStats(SupTrainer):
     def on_task_end(self):
         super(SupTrainerWForgetStats, self).on_task_end()
         self.save_forget_scores()
+        return
+
+    def _log_forget_scores_hist(fs, task, globaliters, bins=20):
+        if sum(np.isinf(fs)) > 0:
+            fs[fs == np.inf] = -1
+        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+        axs.hist(fs, bins=bins)
+        plt.title(f"Forget scores at {globaliters} steps, task {task}")
+        plt.xlabel("Number of forgetting events occurred")
+        plt.ylabel("Number of training samples")
+        wandb.log({"forget scores histogram": wandb.Image(fig)})
+        plt.close()
         return
 
 
@@ -413,11 +426,13 @@ class SupTrainerWReplay(SupTrainer):
     def _log_replay_memory_images(self):
         replay_images, replay_target = self.replay_memory.get_samples(max(self.replay_memory_size, 500))
         replay_images = self.data.inverse_normalize(replay_images.detach().cpu())
+        fig = plt.figure(figsize = (20, 40))
         image_grid = torchvision.utils.make_grid(replay_images)
         ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
         plt.axis('off')
         fig = plt.gcf()
         wandb.log({"replay memory content": fig})
+        plt.close()
         return
 
     def _log_replay_memory_class_distribution(self):
@@ -429,6 +444,7 @@ class SupTrainerWReplay(SupTrainer):
         plt.ylabel("Number of images")
         plt.title("Class distribution of images in replay memory")
         wandb.log({"replay memory class distribution": wandb.Image(fig)})
+        plt.close()
         return
 
     def on_iter_end(self, batch, batch_results):
@@ -440,14 +456,31 @@ class SupTrainerWReplay(SupTrainer):
             else:
                 logging.info("Replay memory is currently empty.")
             if self.memory_type == "forgettables":
-                fs_hist = utils.plot_forget_scores(self.replay_memory.global_forget_scores, self.current_task, self.global_iters)
-                wandb.log({"forget scores histogram": wandb.Image(fs_hist)})
-                fs_hist = utils.plot_forget_scores(self.replay_memory.content["forget_scores"], self.current_task, self.global_iters)
-                wandb.log({"memory content forget scores histogram": wandb.Image(fs_hist)})
+                self._log_forget_scores_hist(self.replay_memory.global_forget_scores,
+                                             self.current_task,
+                                             self.global_iters,
+                                             "forget scores histogram")
+
+                self._log_forget_scores_hist(self.replay_memory.content["forget_scores"],
+                                             self.current_task,
+                                             self.global_iters,
+                                             "memory content forget scores histogram")
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
             self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
 
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
+        return
+
+    def _log_forget_scores_hist(fs, task, globaliters, log_name, bins=20):
+        if sum(np.isinf(fs)) > 0:
+            fs[fs == np.inf] = -1
+        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+        axs.hist(fs, bins=bins)
+        plt.title(f"Forget scores at {globaliters} steps, task {task}")
+        plt.xlabel("Number of forgetting events occurred")
+        plt.ylabel("Number of training examples")
+        wandb.log({log_name: wandb.Image(fig)})
+        plt.close()
         return
