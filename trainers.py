@@ -467,6 +467,12 @@ class SupTrainerWReplay(SupTrainer):
                                              self.current_task,
                                              self.global_iters,
                                              "memory content forget scores histogram")
+
+                fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
+                           "count corrects": sum(batch_results["corrects"]),
+                           "count never_correct": len(self.replay_memory.forget_stats["never_correct"])}
+                wandb.log({k: v for k, v in fs_dict.items()})
+
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
