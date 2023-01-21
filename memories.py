@@ -196,8 +196,8 @@ class ForgettablesMemory(Memory):
         old_target = self.content['targets'][idx].item()
         self.target2indices[old_target].remove(idx)
 
-    def _update_content_at_idx(self, update_image, update_target, idx, forget_score):
-        super(ForgettablesMemory, self)._update_content_at_idx(update_image, update_target, idx)
+    def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, forget_score):
+        super(ForgettablesMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx) # ez változott
         self.content["forget_scores"][idx] = forget_score
 
     def _update_with_item(self, update_image, update_target, update_idx_in_ds):
@@ -209,14 +209,14 @@ class ForgettablesMemory(Memory):
 
         if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
             idx = self.size
-            self._update_content_at_idx(update_image, update_target, idx, update_forget_score)
+            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
             self.size += 1
             self.size_per_target[target_value] += 1
 
         elif update_forget_score < min_forget_score:
             idx = np.argmin(self.content["forget_scores"])
             self._remove_idx_with_target(idx, update_target)
-            self._update_content_at_idx(update_image, update_target, idx, update_forget_score)
+            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
         return
 
     def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):

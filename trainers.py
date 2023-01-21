@@ -382,11 +382,13 @@ class SupTrainerWReplay(SupTrainer):
                 precomputed_scores_path=self.precomputed_scores_path,
             )
         elif self.memory_type == "forgettables":
+            size_limit_per_target = self.replay_memory_size // self.data.num_classes[0]
             self.replay_memory = memories.ForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
+                size_limit_per_target = size_limit_per_target,
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
@@ -473,7 +475,7 @@ class SupTrainerWReplay(SupTrainer):
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return
 
-    def _log_forget_scores_hist(fs, task, globaliters, log_name, bins=20):
+    def _log_forget_scores_hist(self, fs, task, globaliters, log_name, bins=20):
         if sum(np.isinf(fs)) > 0:
             fs[fs == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
