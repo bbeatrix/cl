@@ -146,6 +146,7 @@ class PrecomputedScoresRankMemory(FixedMemory):
             scores_in_content = self.content["scores"][self.target2indices[update_target.item()]]
             if np.min(scores_in_content) < self.precomputed_scores[update_index_in_ds]:
                 min_score_idx_in_content = np.argmin(scores_in_content)
+                self.target2indices[update_target].pop(min_score_idx_in_content)
                 self._update_content_at_idx(update_image, update_target, update_index_in_ds, min_score_idx_in_content)
         return
 
@@ -197,7 +198,7 @@ class ForgettablesMemory(Memory):
         self.target2indices[old_target].remove(idx)
 
     def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, forget_score):
-        super(ForgettablesMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx) # ez változott
+        super(ForgettablesMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
         self.content["forget_scores"][idx] = forget_score
 
     def _update_with_item(self, update_image, update_target, update_idx_in_ds):
