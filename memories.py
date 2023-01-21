@@ -122,13 +122,16 @@ class PrecomputedScoresRankMemory(FixedMemory):
         super().__init__(image_shape, target_shape, device, size_limit)
 
         self.precomputed_scores = np.load(precomputed_scores_path)
-        self.min_score_in_content = -np.inf
-        self.min_score_idx_in_content = -1
+        self.content.update({"scores": -np.ones(self.size_limit, dtype=float)})
+
+    def _update_content_at_idx(self, update_image, update_target, update_index_in_ds, idx):
+        super(PrecomputedScoresRankMemory, self)._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+        self.content["scores"][idx] = self.precomputed_scores[update_index_in_ds]
 
     def get_index_of_replace(self):
         for target, size in self.size_per_target.items():
             if size > self.size_limit_per_target:
-                scores = self.precomputed_scores[self.target2indices[target]]
+                scores = self.content["scores"][self.target2indices[target]]
                 min_score_idx = np.argmin(scores)
                 idx = self.target2indices[target][min_score_idx]
                 self.target2indices[target].pop(min_score_idx)
@@ -140,16 +143,10 @@ class PrecomputedScoresRankMemory(FixedMemory):
         super()._update_with_item(update_image, update_target, update_index_in_ds)
         
         if update_index_in_ds not in self.content["indices_in_ds"]:
-            if self.min_score_in_content < self.precomputed_scores[update_index_in_ds]:
-                old_target = self.content["targets"][self.min_score_idx_in_content].item()
-                self.target2indices[old_target].pop(self.min_score_idx_in_content)
-                self.size_per_target[old_target] -= 1
-                self._update_content_at_idx(update_image, update_target, update_index_in_ds, self.min_score_idx_in_content)
-                self.size_per_target[update_target.item()] += 1
-
-        content_indices_in_ds = self.content["indices_in_ds"][self.content["indices_in_ds"] != None]
-        self.min_score_in_content = np.min(self.precomputed_scores[content_indices_in_ds])
-        self.min_score_idx_in_content = np.argmin(self.precomputed_scores[content_indices_in_ds])
+            scores_in_content = self.content["scores"][self.target2indices[update_target.item()]]
+            if np.min(scores_in_content) < self.precomputed_scores[update_index_in_ds]:
+                min_score_idx_in_content = np.argmin(scores_in_content)
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, min_score_idx_in_content)
         return
 
 
