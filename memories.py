@@ -154,7 +154,7 @@ class PrecomputedScoresRankMemory(FixedMemory):
             elif np.min(scores_in_content) < self.precomputed_scores[update_index_in_ds]:
                 replace_idx_in_content = np.argmin(scores_in_content)
             if replace_idx_in_content is not None:
-                self.target2indices[update_target].pop(replace_idx_in_content)
+                self.target2indices[update_target.item()].pop(replace_idx_in_content)
                 self._update_content_at_idx(update_image, update_target, update_index_in_ds, replace_idx_in_content)
         return
 

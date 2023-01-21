@@ -23,5 +23,7 @@ SupTrainerWReplay.memory_type = "scorerank"
 SupTrainerWReplay.replay_batch_size = 500
 SupTrainerWReplay.replay_memory_size = 500
 SupTrainerWReplay.precomputed_scores_path = './outputs/data/cifar10_train_precomputedcscores.npy'
+SupTrainerWReplay.score_type = "consistency"
+SupTrainerWReplay.score_order = "high"
 
 torch.optim.SGD.momentum = 0.9

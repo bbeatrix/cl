@@ -356,7 +356,7 @@ class SupTrainerWReplay(SupTrainer):
             self.replay_batch_size = replay_batch_size
             self.precomputed_scores_path = precomputed_scores_path
             self.score_type = score_type
-            self.score_oreder = score_order
+            self.score_order = score_order
             self.init_memory()
 
     def init_memory(self):
@@ -467,13 +467,13 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_scores_hist(self.replay_memory.precomputed_scores,
                                       self.current_task,
                                       self.global_iters,
-                                      f"precomputed {self.replay_memory.score_type} scores histogram",
-                                      score_type=self.replay_memory.score_type)
+                                      f"precomputed {self.score_type} scores histogram",
+                                      score_type=self.score_type)
                 self._log_scores_hist(self.replay_memory.content["scores"],
                                       self.current_task,
                                       self.global_iters,
-                                      f"memory content precomputed {self.replay_memory.score_type} scores histogram",
-                                      score_type=self.replay_memory.score_type)
+                                      f"memory content precomputed {self.score_type} scores histogram",
+                                      score_type=self.score_type)
 
             elif self.memory_type == "forgettables":
                 self._log_scores_hist(self.replay_memory.global_forget_scores,
