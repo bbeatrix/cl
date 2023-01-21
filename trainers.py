@@ -336,7 +336,8 @@ class SupTrainerWReplay(SupTrainer):
     MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
-                 replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None):
+                 replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
+                 score_order=None):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -354,6 +355,8 @@ class SupTrainerWReplay(SupTrainer):
             self.replay_memory_size = replay_memory_size
             self.replay_batch_size = replay_batch_size
             self.precomputed_scores_path = precomputed_scores_path
+            self.score_type = score_type
+            self.score_oreder = score_order
             self.init_memory()
 
     def init_memory(self):
@@ -374,12 +377,15 @@ class SupTrainerWReplay(SupTrainer):
         elif self.memory_type == "scorerank":
             err_message = "Parameter value must be set in config file"
             assert (self.precomputed_scores_path is not None) == True, err_message
+            assert (self.score_type  in ["forget", "consistency"]) == True, err_message
+            assert (self.score_order in ["low", "high"]) == True, err_message
             self.replay_memory = memories.PrecomputedScoresRankMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
                 precomputed_scores_path=self.precomputed_scores_path,
+                score_order=self.score_order,
             )
         elif self.memory_type == "forgettables":
             size_limit_per_target = self.replay_memory_size // self.data.num_classes[0]
@@ -457,16 +463,28 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_replay_memory_class_distribution()
             else:
                 logging.info("Replay memory is currently empty.")
-            if self.memory_type == "forgettables":
-                self._log_forget_scores_hist(self.replay_memory.global_forget_scores,
-                                             self.current_task,
-                                             self.global_iters,
-                                             "forget scores histogram")
+            if self.memory_type == "scorerank":
+                self._log_scores_hist(self.replay_memory.precomputed_scores,
+                                      self.current_task,
+                                      self.global_iters,
+                                      f"precomputed {self.replay_memory.score_type} scores histogram",
+                                      score_type=self.replay_memory.score_type)
+                self._log_scores_hist(self.replay_memory.content["scores"],
+                                      self.current_task,
+                                      self.global_iters,
+                                      f"memory content precomputed {self.replay_memory.score_type} scores histogram",
+                                      score_type=self.replay_memory.score_type)
 
-                self._log_forget_scores_hist(self.replay_memory.content["forget_scores"],
-                                             self.current_task,
-                                             self.global_iters,
-                                             "memory content forget scores histogram")
+            elif self.memory_type == "forgettables":
+                self._log_scores_hist(self.replay_memory.global_forget_scores,
+                                      self.current_task,
+                                      self.global_iters,
+                                      "forget scores histogram")
+
+                self._log_scores_hist(self.replay_memory.content["forget_scores"],
+                                      self.current_task,
+                                      self.global_iters,
+                                      "memory content forget scores histogram")
 
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
@@ -481,13 +499,13 @@ class SupTrainerWReplay(SupTrainer):
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return
 
-    def _log_forget_scores_hist(self, fs, task, globaliters, log_name, bins=20):
-        if sum(np.isinf(fs)) > 0:
-            fs[fs == np.inf] = -1
+    def _log_scores_hist(self, scores, task, globaliters, log_name, score_type="forget", bins=20):
+        if sum(np.isinf(scores)) > 0:
+            scores[scores == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-        axs.hist(fs, bins=bins)
-        plt.title(f"Forget scores at {globaliters} steps, task {task}")
-        plt.xlabel("Number of forgetting events occurred")
+        axs.hist(scores, bins=bins)
+        plt.title(f"{score_type.capitalize()} scores at {globaliters} steps, task {task}")
+        plt.xlabel(f"{score_type.capitalize()} score values")
         plt.ylabel("Number of training examples")
         wandb.log({log_name: wandb.Image(fig)})
         plt.close()
