@@ -15,7 +15,8 @@ class Data:
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
-                 apply_vit_transforms=False, tasks_random_splits=False):
+                 apply_vit_transforms=False, tasks_random_splits=False, simple_augmentation=False,
+                 normalization=False):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
 
@@ -30,6 +31,8 @@ class Data:
         self.num_cycles = num_cycles
         self.apply_vit_transforms = apply_vit_transforms
         self.tasks_random_splits = tasks_random_splits
+        self.simple_augmentation = simple_augmentation
+        self.normalization = normalization
 
         self._setup()
 
@@ -64,6 +67,9 @@ class Data:
                                     tfs.ToTensor(),
                                     tfs.Normalize(mean=[0.5, 0.5, 0.5],
                                                   std=[0.5, 0.5, 0.5])]
+            if self.simple_augmentation:
+                augment_transforms = [tfs.RandomCrop(self.image_size, padding=4),
+                                      tfs.RandomHorizontalFlip()]
             else:
                 augment_transforms = [tfs.RandomResizedCrop(size=self.image_size,
                                                             scale=(0.2, 1.)),
@@ -72,31 +78,41 @@ class Data:
                                                       p=0.8),
                                       tfs.RandomGrayscale(p=0.2)]
 
-        train_transforms = tfs.Compose(augment_transforms + image_transforms)
-        test_transforms = tfs.Compose(image_transforms)
+        train_transforms = augment_transforms + image_transforms
+        test_transforms = image_transforms
 
         if self.dataset_name == 'cifar100':
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
+            if self.normalization:
+                train_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
+                                                      std=(0.2673, 0.2564, 0.2762)))
+                test_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
+                                                     std=(0.2673, 0.2564, 0.2762)))
             self.train_dataset = datasets.CIFAR100(self.datadir,
                                                    train=True,
                                                    download=True,
-                                                   transform=train_transforms)
+                                                   transform=tfs.Compose(train_transforms))
             self.test_dataset = datasets.CIFAR100(self.datadir,
                                                   train=False,
                                                   download=True,
-                                                  transform=test_transforms)
+                                                  transform=tfs.Compose(test_transforms))
         elif self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
 
+            if self.normalization:
+                train_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465),
+                                                      std=(0.247, 0.243, 0.261)))
+                test_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465),
+                                                     std=(0.247, 0.243, 0.261)))
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,
                                                   download=True,
-                                                  transform=train_transforms)
+                                                  transform=tfs.Compose(train_transforms))
             self.test_dataset = datasets.CIFAR10(self.datadir,
                                                  train=False,
                                                  download=True,
-                                                 transform=test_transforms)
+                                                 transform=tfs.Compose(test_transforms))
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 
