@@ -389,7 +389,7 @@ class SupTrainerWReplay(SupTrainer):
             )
         elif self.memory_type == "forgettables":
             err_message = "Parameter value must be set in config file"
-            assert (self.score_order in ["low", "high"]) == True, err_message
+            assert (self.score_order in ["low", "high", "best"]) == True, err_message
             self.replay_memory = memories.ForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),

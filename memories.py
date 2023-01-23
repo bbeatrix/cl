@@ -247,6 +247,8 @@ class ForgettablesMemory(Memory):
                 replace_idx_in_content = None
                 if self.score_order == "low" and np.max(scores_in_content) > update_forget_score:
                     replace_idx_in_content = np.argmax(scores_in_content)
+                elif self.score_order == "best" and np.min(scores_in_content) > update_forget_score:
+                    replace_idx_in_content = np.argmin(scores_in_content)
                 elif np.min(scores_in_content) < update_forget_score:
                     replace_idx_in_content = np.argmin(scores_in_content)
                 if replace_idx_in_content is not None:
