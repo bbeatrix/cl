@@ -388,13 +388,14 @@ class SupTrainerWReplay(SupTrainer):
                 score_order=self.score_order,
             )
         elif self.memory_type == "forgettables":
-            size_limit_per_target = self.replay_memory_size // self.data.num_classes[0]
+            err_message = "Parameter value must be set in config file"
+            assert (self.score_order in ["low", "high"]) == True, err_message
             self.replay_memory = memories.ForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
-                size_limit_per_target = size_limit_per_target,
+                score_order=self.score_order,
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
