@@ -318,7 +318,7 @@ class SupTrainerWForgetStats(SupTrainer):
         self.save_forget_scores()
         return
 
-    def _log_forget_scores_hist(fs, task, globaliters, bins=20):
+    def _log_forget_scores_hist(self, fs, task, globaliters, bins=20):
         if sum(np.isinf(fs)) > 0:
             fs[fs == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)

@@ -89,6 +89,8 @@ class Data:
                                                       std=(0.2673, 0.2564, 0.2762)))
                 test_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
                                                      std=(0.2673, 0.2564, 0.2762)))
+                self.inverse_normalize = tfs.Normalize(mean=(-0.5071/0.2673, -0.4865/0.2564, -0.4409/0.2762),
+                                                       std=[1/0.2673, 1/0.2564, 1/0.2762])
             self.train_dataset = datasets.CIFAR100(self.datadir,
                                                    train=True,
                                                    download=True,
@@ -105,6 +107,8 @@ class Data:
                                                       std=(0.247, 0.243, 0.261)))
                 test_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465),
                                                      std=(0.247, 0.243, 0.261)))
+                self.inverse_normalize = tfs.Normalize(mean=(-0.4914/0.247, -0.4822/0.243, -0.4465/0.261),
+                                                       std=[1/0.247, 1/0.243, 1/0.261])
             self.train_dataset = datasets.CIFAR10(self.datadir,
                                                   train=True,
                                                   download=True,
