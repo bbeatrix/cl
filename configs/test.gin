@@ -3,7 +3,7 @@ ExperimentManager.logdir = './outputs'
 
 Data.dataset_name = 'cifar10'
 Data.target_type = 'supervised with replay'
-Data.batch_size = 32
+Data.batch_size = 128
 Data.augment = False
 Data.num_tasks = 5
 Data.num_cycles = 1
@@ -12,7 +12,7 @@ Model.model_class = @models.simplecnn
 simplecnn.width = 4
 Model.use_classifier_head = True
 
-Trainer.iters = 10
+Trainer.iters = 395
 Trainer.lr = 0.001
 Trainer.wd = 0.0
 Trainer.optimizer = @torch.optim.SGD
