@@ -333,7 +333,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "forgettablesoriginal", "scorerank"]
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "forgettablesoriginal", "forgettablesoriginalwreplace", "scorerank"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -406,6 +406,15 @@ class SupTrainerWReplay(SupTrainer):
                 device=self.device,
                 size_limit=self.replay_memory_size,
                 size_limit_per_target=self.replay_memory_size // self.data.num_classes[0],
+                num_train_examples=len(self.data.train_dataset),
+                logdir=self.logdir
+            )
+        elif self.memory_type == "forgettablesoriginalwreplace":
+            self.replay_memory = memories.ForgettablesOriginalWReplaceMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )

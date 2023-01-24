@@ -22,7 +22,7 @@ Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100
 
 SupTrainerWReplay.use_replay = True
-SupTrainerWReplay.memory_type = "forgettablesoriginal"
+SupTrainerWReplay.memory_type = "forgettablesoriginalwreplace"
 SupTrainerWReplay.replay_batch_size = 64
 SupTrainerWReplay.replay_memory_size = 1000
 
