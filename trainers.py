@@ -74,6 +74,7 @@ class Trainer:
     def train(self):
         self.global_iters = 0
         self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
+        self.task_accuracies = {}
         logging.info("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
@@ -142,7 +143,7 @@ class Trainer:
                          os.path.join(self.logdir,
                                       f"model_task={self.current_task}_globaliter={self.global_iters}"))
         self.test()
-        self._log_avg_accuracy()
+        self._log_avg_accuracy_and_forgetting()
 
     def test(self):
         with torch.no_grad():
@@ -187,7 +188,7 @@ class Trainer:
         plt.close()
         return
 
-    def _log_avg_accuracy(self):
+    def _log_avg_accuracy_and_forgetting(self):
         with torch.no_grad():
             self.model.eval()
             avg_accuracy = 0
@@ -204,11 +205,27 @@ class Trainer:
                         for metric in test_results.keys():
                             test_results[metric] += test_batch_results[metric].data
 
-                avg_accuracy += test_results['accuracy'] / (test_batch_count + 1)
+                acc_on_task = test_results['accuracy'] / (test_batch_count + 1)
+                if idx not in self.task_accuracies.keys():
+                    self.task_accuracies[idx] = [acc_on_task.cpu().numpy()]
+                else:
+                    self.task_accuracies[idx].append(acc_on_task.cpu().numpy())
+                avg_accuracy += acc_on_task
 
             avg_accuracy /= (self.current_task + 1)
             logging.info(f'\t Average accuracy after {self.current_task+1} task: {avg_accuracy}')
             wandb.log({'average accuracy': avg_accuracy})
+
+            if self.current_task > 0:
+                avg_forgetting = 0
+                for prev_task in range(0, self.current_task):
+                    f_prev_task = max(self.task_accuracies[prev_task][:-1]) - self.task_accuracies[prev_task][-1]
+                avg_forgetting += f_prev_task
+                avg_forgetting /= (self.current_task)
+                logging.info(f'\t Average forgetting after {self.current_task+1} task: {avg_forgetting}')
+                wandb.log({'average forgetting': avg_forgetting})
+
+            wandb.log({'task accuracies dict': np.array([v for v in self.task_accuracies.values()], dtype=object)})
         return
 
 
