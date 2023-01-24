@@ -160,11 +160,13 @@ class PrecomputedScoresRankMemory(FixedMemory):
 
 
 class ForgettablesMemory(Memory):
-    def __init__(self, image_shape, target_shape, device, size_limit, score_order, num_train_examples,
-                 logdir, log_score_freq=100):
+    def __init__(self, image_shape, target_shape, device, size_limit, score_order, update_content_scores, check_containing,
+                 num_train_examples, logdir, log_score_freq=100):
         super().__init__(image_shape, target_shape, device, size_limit)
 
         self.score_order = score_order
+        self.update_content_scores = update_content_scores
+        self.check_containing = check_containing
         self.size_limit_per_target = size_limit
         self.size_per_target = {}
         self.num_train_examples = num_train_examples
@@ -225,12 +227,13 @@ class ForgettablesMemory(Memory):
         return
 
     def _update_with_item(self, update_image, update_target, update_idx_in_ds):
+        min_forget_score = self.content["forget_scores"].min()
         update_forget_score = self.global_forget_scores[update_idx_in_ds]
         target_value = update_target.item()
         if target_value not in self.size_per_target.keys():
             self.size_per_target[target_value] = 0
             self.size_limit_per_target = self.size_limit // len(self.size_per_target)
-        if update_idx_in_ds not in self.content["indices_in_ds"]:
+        if self.check_containing == False or (self.check_containing == True and update_idx_in_ds not in self.content["indices_in_ds"]):
             if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
                 idx = self.size
                 self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
@@ -247,194 +250,22 @@ class ForgettablesMemory(Memory):
                 replace_idx_in_content = None
                 if self.score_order == "low" and np.max(scores_in_content) > update_forget_score:
                     replace_idx_in_content = np.argmax(scores_in_content)
-                elif self.score_order == "best" and np.min(scores_in_content) > update_forget_score:
-                    replace_idx_in_content = np.argmin(scores_in_content)
-                elif np.min(scores_in_content) < update_forget_score:
-                    replace_idx_in_content = np.argmin(scores_in_content)
-                if replace_idx_in_content is not None:
                     self.target2indices[update_target.item()].pop(replace_idx_in_content)
+                elif self.score_order == "best" and update_forget_score < min_forget_score: 
+                    replace_idx_in_content = np.argmin(self.content["forget_scores"])
+                    self._remove_idx_with_target(replace_idx_in_content, update_target)
+                elif self.score_order == "high" and np.min(scores_in_content) < update_forget_score:
+                    replace_idx_in_content = np.argmin(scores_in_content)
+                    self.target2indices[update_target.item()].pop(replace_idx_in_content)
+                if replace_idx_in_content is not None:
                     self._update_content_at_idx(update_image, update_target, update_idx_in_ds, replace_idx_in_content, update_forget_score)
         return
 
     def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
         self._update_forget_stats(indices_in_ds, corrects)
-        indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))
-        self.content["forget_scores"][indices_where_content] = self.global_forget_scores[indices_where_content]
-        for i in range(update_images.shape[0]):
-            self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
-
-        if global_iters % self.log_score_freq == 0:
-            self._save_forget_scores(global_iters)
-        return
-
-
-class ForgettablesOriginalMemory(Memory):
-    def __init__(self, image_shape, target_shape, device, size_limit, size_limit_per_target, num_train_examples,
-                 logdir, log_score_freq=100):
-        super().__init__(image_shape, target_shape, device, size_limit)
-
-        self.size_limit_per_target = size_limit_per_target
-        self.size_per_target = {}
-        self.num_train_examples = num_train_examples
-        self.logdir = logdir
-
-        self.forget_stats = {
-            "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
-            "num_forgets": np.zeros(self.num_train_examples, dtype=float),
-            "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
-        }
-
-        self.global_forget_scores = self.forget_stats["num_forgets"].copy()
-        self.global_forget_scores[self.forget_stats["never_correct"]] = np.inf
-        self.log_score_freq = log_score_freq
-        if not os.path.isdir(os.path.join(self.logdir, "global_forget_scores")):
-            os.makedirs(os.path.join(self.logdir, "global_forget_scores"))
-        self.content.update({"forget_scores": np.zeros(self.size_limit, dtype=float)})
-
-    def _update_forget_stats(self, idxs, corrects):
-        idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
-        self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
-        self.forget_stats["prev_corrects"][idxs] = corrects
-        self.forget_stats["never_correct"] = np.setdiff1d(
-            self.forget_stats["never_correct"],
-            idxs[corrects.astype(bool)],
-            True
-        )
-        self.global_forget_scores = self.forget_stats["num_forgets"].copy()
-        self.global_forget_scores[self.forget_stats["never_correct"]] = np.inf
-        return
-
-    def _save_forget_scores(self, global_iters):
-        save_path = os.path.join(self.logdir,
-                                 "global_forget_scores",
-                                 f"fs_globaliter={global_iters}.npy")
-        np.save(save_path, self.global_forget_scores)
-
-    def _remove_idx_with_target(self, idx, target):
-        old_target = self.content['targets'][idx].item()
-        self.target2indices[old_target].remove(idx)
-
-    def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, forget_score):
-        super(ForgettablesOriginalMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
-        self.content["forget_scores"][idx] = forget_score
-
-    def _update_with_item(self, update_image, update_target, update_idx_in_ds):
-        min_forget_score = self.content["forget_scores"].min()
-        update_forget_score = self.global_forget_scores[update_idx_in_ds]
-        target_value = update_target.item()
-        if target_value not in self.size_per_target.keys():
-            self.size_per_target[target_value] = 0
-
-        if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
-            idx = self.size
-            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
-            self.size += 1
-            self.size_per_target[target_value] += 1
-
-        elif update_forget_score < min_forget_score:
-            idx = np.argmin(self.content["forget_scores"])
-            self._remove_idx_with_target(idx, update_target)
-            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
-        return
-
-    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
-        self._update_forget_stats(indices_in_ds, corrects)
-        self.min_forget_score = self.content["forget_scores"].min()
-        for i in range(update_images.shape[0]):
-            self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
-
-        if global_iters % self.log_score_freq == 0:
-            self._save_forget_scores(global_iters)
-        return
-
-
-class ForgettablesOriginalWReplaceMemory(Memory):
-    def __init__(self, image_shape, target_shape, device, size_limit, size_limit_per_target, num_train_examples,
-                 logdir, log_score_freq=100):
-        super().__init__(image_shape, target_shape, device, size_limit)
-
-        self.size_limit_per_target = size_limit
-        self.size_per_target = {}
-        self.num_train_examples = num_train_examples
-        self.logdir = logdir
-
-        self.forget_stats = {
-            "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
-            "num_forgets": np.zeros(self.num_train_examples, dtype=float),
-            "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
-        }
-
-        self.global_forget_scores = self.forget_stats["num_forgets"].copy()
-        self.global_forget_scores[self.forget_stats["never_correct"]] = np.inf
-        self.log_score_freq = log_score_freq
-        if not os.path.isdir(os.path.join(self.logdir, "global_forget_scores")):
-            os.makedirs(os.path.join(self.logdir, "global_forget_scores"))
-        self.content.update({"forget_scores": np.zeros(self.size_limit, dtype=float)})
-
-    def _update_forget_stats(self, idxs, corrects):
-        idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
-        self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
-        self.forget_stats["prev_corrects"][idxs] = corrects
-        self.forget_stats["never_correct"] = np.setdiff1d(
-            self.forget_stats["never_correct"],
-            idxs[corrects.astype(bool)],
-            True
-        )
-        self.global_forget_scores = self.forget_stats["num_forgets"].copy()
-        self.global_forget_scores[self.forget_stats["never_correct"]] = np.inf
-        return
-
-    def _save_forget_scores(self, global_iters):
-        save_path = os.path.join(self.logdir,
-                                 "global_forget_scores",
-                                 f"fs_globaliter={global_iters}.npy")
-        np.save(save_path, self.global_forget_scores)
-
-    def _remove_idx_with_target(self, idx, target):
-        old_target = self.content['targets'][idx].item()
-        self.target2indices[old_target].remove(idx)
-
-    def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, forget_score):
-        super(ForgettablesOriginalWReplaceMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
-        self.content["forget_scores"][idx] = forget_score
-
-    def get_index_of_replace(self):
-        for target, size in self.size_per_target.items():
-            if size > self.size_limit_per_target:
-                scores = self.content["forget_scores"][self.target2indices[target]]
-                replace_score_idx = np.argmin(scores)
-                idx = self.target2indices[target][replace_score_idx]
-                self.target2indices[target].pop(replace_score_idx)
-                self.size_per_target[target] -= 1
-                return idx
-        return
-
-    def _update_with_item(self, update_image, update_target, update_idx_in_ds):
-        min_forget_score = self.content["forget_scores"].min()
-        update_forget_score = self.global_forget_scores[update_idx_in_ds]
-        target_value = update_target.item()
-        if target_value not in self.size_per_target.keys():
-            self.size_per_target[target_value] = 0
-            self.size_limit_per_target = self.size_limit // len(self.size_per_target)
-        if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
-            idx = self.size
-            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
-            self.size += 1
-            self.size_per_target[target_value] += 1
-        elif self.size_per_target[target_value] < self.size_limit_per_target:
-            idx = self.get_index_of_replace()
-            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
-            self.size_per_target[target_value] += 1
-
-        elif update_forget_score < min_forget_score:
-            idx = np.argmin(self.content["forget_scores"])
-            self._remove_idx_with_target(idx, update_target)
-            self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_forget_score)
-        return
-
-    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
-        self._update_forget_stats(indices_in_ds, corrects)
-        self.min_forget_score = self.content["forget_scores"].min()
+        if self.update_content_scores:
+            indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))
+            self.content["forget_scores"][indices_where_content] = self.global_forget_scores[indices_where_content]
         for i in range(update_images.shape[0]):
             self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
 

@@ -354,7 +354,7 @@ class SupTrainerWReplay(SupTrainer):
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
-                 score_order=None):
+                 score_order=None, update_content_scores=None, check_containing=None):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -374,6 +374,8 @@ class SupTrainerWReplay(SupTrainer):
             self.precomputed_scores_path = precomputed_scores_path
             self.score_type = score_type
             self.score_order = score_order
+            self.update_content_scores = update_content_scores
+            self.check_containing = check_containing
             self.init_memory()
 
     def init_memory(self):
@@ -407,31 +409,16 @@ class SupTrainerWReplay(SupTrainer):
         elif self.memory_type == "forgettables":
             err_message = "Parameter value must be set in config file"
             assert (self.score_order in ["low", "high", "best"]) == True, err_message
+            assert (self.update_content_scores in [True, False]) == True, err_message
+            assert (self.check_containing in [True, False]) == True, err_message
             self.replay_memory = memories.ForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
                 size_limit=self.replay_memory_size,
                 score_order=self.score_order,
-                num_train_examples=len(self.data.train_dataset),
-                logdir=self.logdir
-            )
-        elif self.memory_type == "forgettablesoriginal":
-            self.replay_memory = memories.ForgettablesOriginalMemory(
-                image_shape=self.data.input_shape,
-                target_shape=(1,),
-                device=self.device,
-                size_limit=self.replay_memory_size,
-                size_limit_per_target=self.replay_memory_size // self.data.num_classes[0],
-                num_train_examples=len(self.data.train_dataset),
-                logdir=self.logdir
-            )
-        elif self.memory_type == "forgettablesoriginalwreplace":
-            self.replay_memory = memories.ForgettablesOriginalWReplaceMemory(
-                image_shape=self.data.input_shape,
-                target_shape=(1,),
-                device=self.device,
-                size_limit=self.replay_memory_size,
+                update_content_scores=self.update_content_scores,
+                check_containing=self.check_containing,
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
