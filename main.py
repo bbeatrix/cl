@@ -98,7 +98,8 @@ def main(argv):
         exp_logdir = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
         exp_prefix = wandb.run.id
 
-    wandb.run.name = FLAGS.gin_file[0].split('/')[-1][:-4]
+    run_counter = wandb.run.name.split("-")[-1]
+    wandb.run.name = run_counter + "-" + FLAGS.gin_file[0].split('/')[-1][:-4]
     wandb.run.save()
 
     wandb.config.update(gin_config_to_dict(gin.config_str()))
