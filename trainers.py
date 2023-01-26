@@ -60,7 +60,8 @@ class Trainer:
                                         gamma=0.1)
         self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
         self.logdir = logdir
-
+        if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
+            os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
 
     @abstractmethod
     def train_on_batch(self, batch):
@@ -141,6 +142,7 @@ class Trainer:
     def on_task_end(self):
         utils.save_model(self.model,
                          os.path.join(self.logdir,
+                                      "model_checkpoints"
                                       f"model_task={self.current_task}_globaliter={self.global_iters}"))
         self.test()
         self._log_avg_accuracy_and_forgetting()
