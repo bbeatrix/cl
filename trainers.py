@@ -516,8 +516,8 @@ class SupTrainerWReplay(SupTrainer):
                                       f"memory content precomputed {self.score_type} scores histogram",
                                       score_type=self.score_type)
                 fs_dict = {"memory content size": len(self.replay_memory.content["indices_in_ds"]),
-                           "memory content score min": min(self.replay_memory.content["forget_scores"]),
-                           "memory content score max": max(self.replay_memory.content["forget_scores"]),
+                           "memory content score min": min(self.replay_memory.content["scores"]),
+                           "memory content score max": max(self.replay_memory.content["scores"]),
                            "global score min": min(self.replay_memory.precomputed_scores),
                            "global score max": max(self.replay_memory.precomputed_scores)}
                 wandb.log({k: v for k, v in fs_dict.items()})
@@ -536,7 +536,7 @@ class SupTrainerWReplay(SupTrainer):
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
                            "count never_correct": len(self.replay_memory.forget_stats["never_correct"]),
-                           "memory content size": len(self.replay_memory.content["indices_in_ds"]),
+                           "memory content size": self.replay_memory.size,
                            "memory content score min": min(self.replay_memory.content["forget_scores"]),
                            "memory content score max": max(self.replay_memory.content["forget_scores"]),
                            "global score min": min(self.replay_memory.global_forget_scores),
@@ -546,7 +546,7 @@ class SupTrainerWReplay(SupTrainer):
                 save_path = os.path.join(self.logdir,
                                         "memory_content_idxinds",
                                         f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
-                existing_indices = np.array([self.replay_memory.content["indices_in_ds"][self.replay_memory.content["indices_in_ds"] != None]])
+                existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
                 np.savetxt(save_path, existing_indices, delimiter=', ')
                 if self.memory_type == "scorerank":
                     save_path = os.path.join(self.logdir,
