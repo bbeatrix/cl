@@ -496,6 +496,7 @@ class SupTrainerWReplay(SupTrainer):
     def on_iter_end(self, batch, batch_results):
         is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
+            wandb.log({"count memory content update": self.replay_memory.count_content_update})
             if not self.replay_memory.empty():
                 self._log_replay_memory_images()
                 self._log_replay_memory_class_distribution()

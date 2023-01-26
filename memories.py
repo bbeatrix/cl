@@ -15,6 +15,7 @@ class Memory:
             'targets': torch.zeros((self.size_limit, *target_shape), dtype=torch.int32, device=device),
             'indices_in_ds': [None] * self.size_limit,
         }
+        self.count_content_update = 0
 
     @abstractmethod
     def _update_with_item(self, update_image, updat_target, update_index_in_ds):
@@ -34,6 +35,7 @@ class Memory:
             self.target2indices[update_target_value].append(idx)
         else:
             self.target2indices[update_target_value] = [idx]
+        self.count_content_update += 1
 
     def get_samples(self, sample_size, target=None):
         if target is None:
