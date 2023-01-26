@@ -226,6 +226,12 @@ class Trainer:
                 wandb.log({'average forgetting': avg_forgetting})
 
             wandb.log({'task accuracies dict': np.array([v for v in self.task_accuracies.values()], dtype=object)})
+            if not os.path.isdir(os.path.join(self.logdir, "task_accuracies")):
+                os.makedirs(os.path.join(self.logdir, "task_accuracies"))
+            save_path = os.path.join(self.logdir,
+                                    "task_accuracies",
+                                    f"task_accuracies_after_task={self.current_task}_globaliter={self.global_iters}.txt")
+            np.savetxt(save_path, np.array([np.array(v) for v in self.task_accuracies.values()]), delimiter=', ', fmt='%s')
         return
 
 
@@ -350,7 +356,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "forgettablesoriginal", "forgettablesoriginalwreplace", "scorerank"]
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -406,6 +412,10 @@ class SupTrainerWReplay(SupTrainer):
                 precomputed_scores_path=self.precomputed_scores_path,
                 score_order=self.score_order,
             )
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
         elif self.memory_type == "forgettables":
             err_message = "Parameter value must be set in config file"
             assert (self.score_order in ["low", "high", "best"]) == True, err_message
@@ -422,6 +432,10 @@ class SupTrainerWReplay(SupTrainer):
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
         return
 
     def calc_loss_on_batch(self, input_images, target):
@@ -498,6 +512,12 @@ class SupTrainerWReplay(SupTrainer):
                                       self.global_iters,
                                       f"memory content precomputed {self.score_type} scores histogram",
                                       score_type=self.score_type)
+                fs_dict = {"memory content size": len(self.replay_memory.content["indices_in_ds"]),
+                           "memory content score min": min(self.replay_memory.content["forget_scores"]),
+                           "memory content score max": max(self.replay_memory.content["forget_scores"]),
+                           "global score min": min(self.replay_memory.precomputed_scores),
+                           "global score max": max(self.replay_memory.precomputed_scores)}
+                wandb.log({k: v for k, v in fs_dict.items()})
 
             elif self.memory_type == "forgettables":
                 self._log_scores_hist(self.replay_memory.global_forget_scores,
@@ -512,8 +532,30 @@ class SupTrainerWReplay(SupTrainer):
 
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
-                           "count never_correct": len(self.replay_memory.forget_stats["never_correct"])}
+                           "count never_correct": len(self.replay_memory.forget_stats["never_correct"]),
+                           "memory content size": len(self.replay_memory.content["indices_in_ds"]),
+                           "memory content score min": min(self.replay_memory.content["forget_scores"]),
+                           "memory content score max": max(self.replay_memory.content["forget_scores"]),
+                           "global score min": min(self.replay_memory.global_forget_scores),
+                           "global score max": max(self.replay_memory.global_forget_scores)}
                 wandb.log({k: v for k, v in fs_dict.items()})
+            if is_task_start_or_end_iter and not self.replay_memory.empty():
+                save_path = os.path.join(self.logdir,
+                                        "memory_content_idxinds",
+                                        f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
+                existing_indices = np.array([self.replay_memory.content["indices_in_ds"][self.replay_memory.content["indices_in_ds"] != None]])
+                np.savetxt(save_path, existing_indices, delimiter=', ')
+                if self.memory_type == "scorerank":
+                    save_path = os.path.join(self.logdir,
+                                            "memory_content_scores",
+                                            f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")
+                    np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%.2e')
+
+                elif self.memory_type == "forgettables":
+                    save_path = os.path.join(self.logdir,
+                                            "memory_content_forget_scores",
+                                            f"memory_fs_task={self.current_task}_globaliter={self.global_iters}.txt")
+                    np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%.2e')
 
         if self.use_replay:
             indices_in_ds = batch[2]
