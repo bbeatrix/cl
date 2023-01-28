@@ -565,18 +565,18 @@ class SupTrainerWReplay(SupTrainer):
                                         "memory_content_idxinds",
                                         f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
                 existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
-                np.savetxt(save_path, existing_indices, delimiter=', ')
+                np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%d')
                 if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                     save_path = os.path.join(self.logdir,
                                             "memory_content_scores",
                                             f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%.2e')
+                    np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%1.3f')
 
                 elif self.memory_type == "forgettables":
                     save_path = os.path.join(self.logdir,
                                             "memory_content_forget_scores",
                                             f"memory_fs_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%.2e')
+                    np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
             indices_in_ds = batch[2]
