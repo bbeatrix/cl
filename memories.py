@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import logging
 import numpy as np
 import os
 import random
@@ -213,8 +214,10 @@ class FixedScoresRankMemory(FixedMemory):
         for target, size in self.size_per_target.items():
             if size > self.size_limit_per_target:
                 idx_in_ds_to_remove = self.selected_indices_per_class[target][-1]
+                l = len(self.selected_indices_per_class[target])
                 while idx_in_ds_to_remove not in self.content["indices_in_ds"]:
-                    print("\n \t Deleted unused index from selected_indices_per_class \n")
+                    l -= 1
+                    logging.info(f"Removing excess index {idx_in_ds_to_remove} from selected_indices_per_class[{l}]")
                     idx_in_ds_to_remove = self.selected_indices_per_class[target].pop(-1)
                 idx = np.where(self.content["indices_in_ds"] == idx_in_ds_to_remove)[0][0]
                 self.target2indices[target].remove(idx)
@@ -228,6 +231,7 @@ class FixedScoresRankMemory(FixedMemory):
             self.size_per_target[target_value] = 0
             self.size_limit_per_target = self.size_limit // len(self.size_per_target)
             self._select_indices_per_target(target_value)
+            logging.info(f"Added new target {target_value}, new size_limit_per_target is {self.size_limit_per_target}")
         if update_index_in_ds.item() in self.selected_indices_per_class[target_value] and update_index_in_ds.item() not in self.content["indices_in_ds"]:
             if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
                 idx = self.size
