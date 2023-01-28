@@ -358,7 +358,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank"]
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank", "fixedscorerank"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -401,6 +401,24 @@ class SupTrainerWReplay(SupTrainer):
                 device=self.device,
                 size_limit=self.replay_memory_size,
             )
+        elif self.memory_type == "fixedscorerank":
+            err_message = "Parameter value must be set in config file"
+            assert (self.precomputed_scores_path is not None) == True, err_message
+            assert (self.score_type  in ["forget", "consistency"]) == True, err_message
+            assert (self.score_order in ["low", "high", "caws", "unforgettables", "neverlearnt"]) == True, err_message
+            self.replay_memory = memories.FixedScoresRankMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                precomputed_scores_path=self.precomputed_scores_path,
+                score_order=self.score_order,
+                score_type=self.score_type,
+            )
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
         elif self.memory_type == "scorerank":
             err_message = "Parameter value must be set in config file"
             assert (self.precomputed_scores_path is not None) == True, err_message
@@ -504,7 +522,7 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_replay_memory_class_distribution()
             else:
                 logging.info("Replay memory is currently empty.")
-            if self.memory_type == "scorerank":
+            if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                 self._log_scores_hist(self.replay_memory.precomputed_scores,
                                       self.current_task,
                                       self.global_iters,
@@ -548,7 +566,7 @@ class SupTrainerWReplay(SupTrainer):
                                         f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
                 existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
                 np.savetxt(save_path, existing_indices, delimiter=', ')
-                if self.memory_type == "scorerank":
+                if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                     save_path = os.path.join(self.logdir,
                                             "memory_content_scores",
                                             f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")

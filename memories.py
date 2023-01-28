@@ -161,6 +161,85 @@ class PrecomputedScoresRankMemory(FixedMemory):
         return
 
 
+class FixedScoresRankMemory(FixedMemory):
+    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path, score_order, score_type):
+        super().__init__(image_shape, target_shape, device, size_limit)
+
+        self.precomputed_scores_with_labels = np.load(precomputed_scores_path)
+        self.precomputed_scores = self.precomputed_scores_with_labels[0]
+        self.score_type = score_type
+        self.score_order = score_order
+        self.content.update({"scores": -100 * np.ones(self.size_limit, dtype=float)})
+        self.selected_indices_per_class = {}
+
+    def _update_content_at_idx(self, update_image, update_target, update_index_in_ds, idx):
+        super(FixedScoresRankMemory, self)._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+        self.content["scores"][idx] = self.precomputed_scores[update_index_in_ds]
+
+    def _select_indices_per_target(self, target):
+        class_indices = np.where(self.precomputed_scores_with_labels[1] == target)[0]
+        class_scores = self.precomputed_scores_with_labels[0][class_indices]
+        # when encountering the first item we do not want to populate the whole memory for sure
+        selection_size = min(self.size_limit//2, self.size_limit_per_target) 
+
+        if self.score_type == "consistency":
+            if self.score_order == "low":
+                sorted_class_score_indices = np.argsort(class_scores)
+                selected_indices = sorted_class_score_indices[:selection_size]
+            elif self.score_order == "high":
+                sorted_class_score_indices = np.argsort(class_scores)
+                selected_indices = np.flip(sorted_class_score_indices)[:selection_size]
+            elif self.score_order == "caws":
+                selected_per_class = np.where(class_scores > 0.8)[0]
+                selected_indices = np.random.choice(selected_per_class, selection_size, replace=False)
+
+        elif self.score_type == "forget":
+            if self.score_order == "low":
+                forgettables_indices = np.where(class_scores > 0)[0]
+                sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
+                selected_indices = sorted_forgettables_indices[:selection_size]
+            elif self.score_order == "high":
+                forgettables_indices = np.where(class_scores > 0)[0]
+                sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
+                selected_indices = np.flip(sorted_forgettables_indices)[:selection_size]
+            elif self.score_order == "unforgettables":
+                unforgettables_indices = np.where(class_scores == 0)[0]
+                selected_indices = unforgettables_indices[:selection_size]
+
+        self.selected_indices_per_class[target] = list(class_indices[selected_indices])
+        return
+
+    def get_index_of_replace(self):
+        for target, size in self.size_per_target.items():
+            if size > self.size_limit_per_target:
+                idx_in_ds_to_remove = self.selected_indices_per_class[target][-1]
+                while idx_in_ds_to_remove not in self.content["indices_in_ds"]:
+                    print("\n \t Deleted unused index from selected_indices_per_class \n")
+                    idx_in_ds_to_remove = self.selected_indices_per_class[target].pop(-1)
+                idx = np.where(self.content["indices_in_ds"] == idx_in_ds_to_remove)[0][0]
+                self.target2indices[target].remove(idx)
+                self.size_per_target[target] -= 1
+                return idx
+        return
+
+    def _update_with_item(self, update_image, update_target, update_index_in_ds):
+        target_value = update_target.item()
+        if target_value not in self.size_per_target.keys():
+            self.size_per_target[target_value] = 0
+            self.size_limit_per_target = self.size_limit // len(self.size_per_target)
+            self._select_indices_per_target(target_value)
+        if update_index_in_ds.item() in self.selected_indices_per_class[target_value] and update_index_in_ds.item() not in self.content["indices_in_ds"]:
+            if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
+                idx = self.size
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+                self.size += 1
+                self.size_per_target[target_value] += 1
+            elif self.size_per_target[target_value] < self.size_limit_per_target:
+                idx = self.get_index_of_replace()
+                self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+                self.size_per_target[target_value] += 1
+
+
 class ForgettablesMemory(Memory):
     def __init__(self, image_shape, target_shape, device, size_limit, score_order, update_content_scores, check_containing,
                  num_train_examples, logdir, log_score_freq=100):
