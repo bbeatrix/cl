@@ -191,7 +191,8 @@ class FixedScoresRankMemory(FixedMemory):
                 sorted_class_score_indices = np.argsort(class_scores)
                 selected_indices = np.flip(sorted_class_score_indices)[:selection_size]
             elif self.score_order == "caws":
-                selected_per_class = np.where(class_scores > 0.8)[0]
+                selected_per_class = np.where(class_scores > 0.6)[0]
+                selection_size=min(selection_size, len(selected_per_class))
                 selected_indices = np.random.choice(selected_per_class, selection_size, replace=False)
 
         elif self.score_type == "forget":
