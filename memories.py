@@ -218,7 +218,7 @@ class FixedScoresRankMemory(FixedMemory):
                 l = len(self.selected_indices_per_class[target])
                 while idx_in_ds_to_remove not in self.content["indices_in_ds"]:
                     l -= 1
-                    logging.info(f"Removing excess index {idx_in_ds_to_remove} from selected_indices_per_class[{l}]")
+                    logging.info(f"Removing excess index {idx_in_ds_to_remove} from selected_indices_per_class[{target}][{l}]")
                     idx_in_ds_to_remove = self.selected_indices_per_class[target].pop(-1)
                 idx = np.where(self.content["indices_in_ds"] == idx_in_ds_to_remove)[0][0]
                 self.target2indices[target].remove(idx)
