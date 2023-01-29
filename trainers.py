@@ -415,8 +415,6 @@ class SupTrainerWReplay(SupTrainer):
                 score_order=self.score_order,
                 score_type=self.score_type,
             )
-            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
-                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
         elif self.memory_type == "scorerank":
@@ -432,8 +430,6 @@ class SupTrainerWReplay(SupTrainer):
                 precomputed_scores_path=self.precomputed_scores_path,
                 score_order=self.score_order,
             )
-            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
-                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
         elif self.memory_type == "forgettables":
@@ -452,10 +448,11 @@ class SupTrainerWReplay(SupTrainer):
                 num_train_examples=len(self.data.train_dataset),
                 logdir=self.logdir
             )
-            if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
-                os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
+
+        if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
+            os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
         return
 
     def calc_loss_on_batch(self, input_images, target):

@@ -71,14 +71,14 @@ class ReservoirMemory(Memory):
         self.target2indices[old_target].remove(idx)
 
     def _update_with_item(self, update_image, update_target, update_index_in_ds):
-        if self.size < self.size_limit and update_index_in_ds not in self.content["indices_in_ds"]:
+        if self.size < self.size_limit:
             idx = self.size
             self._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
             self.size += 1
         else:
             # memory is full.
             m = random.randrange(self.num_seen_images_in_stream)
-            if m < self.size_limit and update_index_in_ds not in self.content["indices_in_ds"]:
+            if m < self.size_limit:
                 # Put it in
                 idx = m
                 self._remove_idx_with_target(idx, update_target)
