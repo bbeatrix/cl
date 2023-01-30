@@ -462,7 +462,7 @@ class SupTrainerWReplay(SupTrainer):
         if self.use_replay and not self.replay_memory.empty():
             replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
             input_images_combined = torch.cat([input_images, replay_images], dim=0)
-            replay_target = replay_target.squeeze()
+            replay_target = replay_target.squeeze(dim=-1)
             target_combined = torch.cat([target, replay_target], dim=0)
 
         model_output = self.model(input_images_combined)
