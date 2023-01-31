@@ -199,11 +199,11 @@ class FixedScoresRankMemory(FixedMemory):
             if self.score_order == "low":
                 forgettables_indices = np.where(class_scores > 0)[0]
                 sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
-                selected_indices = sorted_forgettables_indices[:selection_size]
+                selected_indices = forgettables_indices[sorted_forgettables_indices[:selection_size]]
             elif self.score_order == "high":
                 forgettables_indices = np.where(class_scores > 0)[0]
                 sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
-                selected_indices = np.flip(sorted_forgettables_indices)[:selection_size]
+                selected_indices = forgettables_indices[np.flip(sorted_forgettables_indices)[:selection_size]]
             elif self.score_order == "unforgettables":
                 unforgettables_indices = np.where(class_scores == 0)[0]
                 selected_indices = unforgettables_indices[:selection_size]
