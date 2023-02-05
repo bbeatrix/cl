@@ -358,7 +358,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank", "fixedscorerank"]
+    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank", "fixedscorerank", "fixedunforgettables"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -450,6 +450,26 @@ class SupTrainerWReplay(SupTrainer):
             )
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
+        elif self.memory_type == "fixedunforgettables":
+            err_message = "Parameter value must be set in config file"
+            assert (self.score_order in ["low", "high", "best"]) == True, err_message
+            assert (self.update_content_scores in [True, False]) == True, err_message
+            assert (self.check_containing in [True, False]) == True, err_message
+            self.replay_memory = memories.FixedUnforgettablesMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                score_order=self.score_order,
+                update_content_scores=self.update_content_scores,
+                check_containing=self.check_containing,
+                num_train_examples=len(self.data.train_dataset),
+            )
+            if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
+                os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
+
+            if not os.path.isdir(os.path.join(self.logdir, "global_forget_scores")):
+                os.makedirs(os.path.join(self.logdir, "global_forget_scores"))
 
         if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
             os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
@@ -537,7 +557,7 @@ class SupTrainerWReplay(SupTrainer):
                            "global score max": max(self.replay_memory.precomputed_scores)}
                 wandb.log({k: v for k, v in fs_dict.items()})
 
-            elif self.memory_type == "forgettables":
+            elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
                 self._log_scores_hist(self.replay_memory.global_forget_scores,
                                       self.current_task,
                                       self.global_iters,
@@ -569,11 +589,15 @@ class SupTrainerWReplay(SupTrainer):
                                             f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")
                     np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%1.3f')
 
-                elif self.memory_type == "forgettables":
+                elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
                     save_path = os.path.join(self.logdir,
                                             "memory_content_forget_scores",
                                             f"memory_fs_task={self.current_task}_globaliter={self.global_iters}.txt")
                     np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%1.0f')
+                    save_path = os.path.join(self.logdir,
+                                            "global_forget_scores",
+                                            f"global_fs_task={self.current_task}_globaliter={self.global_iters}.npy")
+                    np.save(save_path, self.replay_memory.global_forget_scores)
 
         if self.use_replay:
             indices_in_ds = batch[2]
@@ -583,7 +607,8 @@ class SupTrainerWReplay(SupTrainer):
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return
 
-    def _log_scores_hist(self, scores, task, globaliters, log_name, score_type="forget", bins=20):
+    def _log_scores_hist(self, scores_input, task, globaliters, log_name, score_type="forget", bins=20):
+        scores = scores_input.copy()
         if sum(np.isinf(scores)) > 0:
             scores[scores == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
