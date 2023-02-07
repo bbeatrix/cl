@@ -279,14 +279,23 @@ class SupTrainerWForgetStats(SupTrainer):
             "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
+            "first_learn_iters": np.inf * np.ones(self.num_train_examples, dtype=np.int32),
         }
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         self.log_score_freq = log_score_freq
         if not os.path.isdir(os.path.join(self.logdir, "forget_scores")):
             os.makedirs(os.path.join(self.logdir, "forget_scores"))
+        if not os.path.isdir(os.path.join(self.logdir, "first_learn_iters")):
+            os.makedirs(os.path.join(self.logdir, "first_learn_iters"))
 
     def update_forget_stats(self, idxs, corrects):
+        count_first_learns = 0
+        for i, idx in enumerate(idxs):
+            if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
+                self.forget_stats["first_learn_iters"][idx] = self.global_iters
+                count_first_learns += 1
+        wandb.log({"count first_learns in iter": count_first_learns})
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["prev_corrects"][idxs] = corrects
@@ -298,6 +307,12 @@ class SupTrainerWForgetStats(SupTrainer):
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         return
+
+    def save_first_learn_iters(self):
+        save_path = os.path.join(self.logdir,
+                                 "first_learn_iters",
+                                 f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
+        np.savetxt(save_path, self.forget_stats["first_learn_iters"], delimiter=', ', fmt='%d')
 
     def save_forget_scores(self):
         save_path = os.path.join(self.logdir,
@@ -332,15 +347,16 @@ class SupTrainerWForgetStats(SupTrainer):
             
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
                        "count corrects": sum(corrects),
-                       "count never_correct": len(self.forget_stats["never_correct"])}
+                       "count never_correct": len(self.forget_stats["never_correct"]),
+                       "count all_first_learnt": np.count_nonzero(np.isfinite(self.forget_stats["first_learn_iters"]))}
 
-            logging.info((", ").join([f"{k}: {v}" for k, v in fs_dict.items()]))
             wandb.log({k: v for k, v in fs_dict.items()})
         return
 
     def on_task_end(self):
         super(SupTrainerWForgetStats, self).on_task_end()
         self.save_forget_scores()
+        self.save_first_learn_iters()
         return
 
     def _log_forget_scores_hist(self, fs, task, globaliters, bins=20):
@@ -471,6 +487,9 @@ class SupTrainerWReplay(SupTrainer):
             if not os.path.isdir(os.path.join(self.logdir, "global_forget_scores")):
                 os.makedirs(os.path.join(self.logdir, "global_forget_scores"))
 
+            if not os.path.isdir(os.path.join(self.logdir, "first_learn_iters")):
+                os.makedirs(os.path.join(self.logdir, "first_learn_iters"))
+
         if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
             os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
         return
@@ -571,6 +590,7 @@ class SupTrainerWReplay(SupTrainer):
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
                            "count never_correct": len(self.replay_memory.forget_stats["never_correct"]),
+                           "count all_first_learnt": np.count_nonzero(np.isfinite(self.replay_memory.forget_stats["first_learn_iters"])),
                            "memory content size": self.replay_memory.size,
                            "memory content score min": min(self.replay_memory.content["forget_scores"]),
                            "memory content score max": max(self.replay_memory.content["forget_scores"]),
@@ -598,11 +618,18 @@ class SupTrainerWReplay(SupTrainer):
                                             "global_forget_scores",
                                             f"global_fs_task={self.current_task}_globaliter={self.global_iters}.npy")
                     np.save(save_path, self.replay_memory.global_forget_scores)
+                if self.memory_type == "fixedunforgettables":
+                    save_path = os.path.join(self.logdir,
+                                            "first_learn_iters",
+                                            f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
+                    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%d')
 
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
             self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
+            if self.memory_type == "fixedunforgettables":
+                wandb.log({"count first_learns in iter": len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])})
 
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return

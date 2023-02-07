@@ -261,6 +261,7 @@ class FixedUnforgettablesMemory(Memory):
             "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
+            "first_learn_iters": np.inf * np.ones(self.num_train_examples, dtype=np.int32),
         }
 
         self.global_forget_scores = self.forget_stats["num_forgets"].copy()
@@ -268,7 +269,10 @@ class FixedUnforgettablesMemory(Memory):
 
         self.content.update({"forget_scores": np.inf * np.ones(self.size_limit, dtype=float)})
 
-    def _update_forget_stats(self, idxs, corrects):
+    def _update_forget_stats(self, idxs, corrects, global_iters):
+        for i, idx in enumerate(idxs):
+            if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
+                self.forget_stats["first_learn_iters"][idx] = global_iters
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["prev_corrects"][idxs] = corrects
@@ -338,7 +342,7 @@ class FixedUnforgettablesMemory(Memory):
         return
 
     def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
-        self._update_forget_stats(indices_in_ds, corrects)
+        self._update_forget_stats(indices_in_ds, corrects, global_iters)
         if self.update_content_scores:
             indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))[0]
             content_indices_in_ds = [self.content["indices_in_ds"][i] for i in indices_where_content]
