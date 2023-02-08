@@ -1,0 +1,15 @@
+
+main.layer=['conv1', 'layer1.0', 'layer1.1', 'layer2.0', 'layer2.1', 'layer3.0', 'layer3.1', 'layer4.0', 'layer4.1']
+main.num_tasks=5
+main.task_idx=[0, 1, 2, 3, 4]
+main.front_model_task_idx=[0, 1, 2, 3, 4]
+main.model_num_epochs=[20, 40]
+
+main.front_model='./model_weights/ResNet_CL/CIFAR10/${front_model_task_id}_of_5/cl_training_task_${front_model_task_id}_of_5_model_num_epochs_${model_num_epochs}.pt'
+main.end_model='./model_weights/ResNet_CL/CIFAR10/1_of_1/cl_training_task_1_of_1_model_num_epochs_${model_num_epochs}.pt'
+
+main.dataset='cifar10'
+main.init='ps_inv'
+
+descartes_builder.name = 'cl'
+descartes_builder.params = ['main.layer', 'main.model_num_epochs', 'main.task_idx', 'main.front_model_task_idx']
