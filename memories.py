@@ -17,6 +17,7 @@ class Memory:
             'indices_in_ds': [None] * self.size_limit,
         }
         self.count_content_update = 0
+        self.content_update_indices = []
 
     @abstractmethod
     def _update_with_item(self, update_image, updat_target, update_index_in_ds):
@@ -37,6 +38,7 @@ class Memory:
         else:
             self.target2indices[update_target_value] = [idx]
         self.count_content_update += 1
+        self.content_update_indices.append(idx)
 
     def get_samples(self, sample_size, target=None):
         if target is None:

@@ -492,6 +492,8 @@ class SupTrainerWReplay(SupTrainer):
 
         if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
             os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
+        if not os.path.isdir(os.path.join(self.logdir, "memory_content_update_indices")):
+            os.makedirs(os.path.join(self.logdir, "memory_content_update_indices"))
         return
 
     def calc_loss_on_batch(self, input_images, target):
@@ -603,6 +605,11 @@ class SupTrainerWReplay(SupTrainer):
                                         f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
                 existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
                 np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%d')
+                save_path = os.path.join(self.logdir,
+                                        "memory_content_update_indices",
+                                        f"memory_content_update_indices_task={self.current_task}_globaliter={self.global_iters}.txt")
+                np.savetxt(save_path, np.array(self.replay_memory.content_update_indices), delimiter=', ', fmt='%d')
+
                 if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                     save_path = os.path.join(self.logdir,
                                             "memory_content_scores",
