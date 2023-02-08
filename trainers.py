@@ -186,7 +186,7 @@ class Trainer:
         ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
         plt.axis('off')
         fig = plt.gcf()
-        wandb.log({"train image batch": fig})
+        wandb.log({"train image batch": fig}, step=self.global_iters)
         plt.close()
         return
 
@@ -216,7 +216,7 @@ class Trainer:
 
             avg_accuracy /= (self.current_task + 1)
             logging.info(f'\t Average accuracy after {self.current_task+1} task: {avg_accuracy}')
-            wandb.log({'average accuracy': avg_accuracy})
+            wandb.log({'average accuracy': avg_accuracy}, step=self.global_iters)
 
             if self.current_task > 0:
                 avg_forgetting = 0
@@ -225,9 +225,10 @@ class Trainer:
                 avg_forgetting += f_prev_task
                 avg_forgetting /= (self.current_task)
                 logging.info(f'\t Average forgetting after {self.current_task+1} task: {avg_forgetting}')
-                wandb.log({'average forgetting': avg_forgetting})
+                wandb.log({'average forgetting': avg_forgetting}, step=self.global_iters)
 
-            wandb.log({'task accuracies dict': np.array([v for v in self.task_accuracies.values()], dtype=object)})
+            task_acc_array = np.array([v for v in self.task_accuracies.values()], dtype=object)
+            wandb.log({'task accuracies dict': task_acc_array}, step=self.global_iters)
             if not os.path.isdir(os.path.join(self.logdir, "task_accuracies")):
                 os.makedirs(os.path.join(self.logdir, "task_accuracies"))
             save_path = os.path.join(self.logdir,
@@ -295,7 +296,7 @@ class SupTrainerWForgetStats(SupTrainer):
             if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
                 self.forget_stats["first_learn_iters"][idx] = self.global_iters
                 count_first_learns += 1
-        wandb.log({"count first_learns in iter": count_first_learns})
+        wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["prev_corrects"][idxs] = corrects
@@ -343,14 +344,14 @@ class SupTrainerWForgetStats(SupTrainer):
         self.update_forget_stats(indices_in_ds, corrects)
         if self.global_iters % self.log_score_freq == 0:
             self.save_forget_scores()
-            self._log_forget_scores_hist(self.forget_scores, self.current_task, self.global_iters)
+            self._log_forget_scores_hist(self.forget_scores)
             
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
                        "count corrects": sum(corrects),
                        "count never_correct": len(self.forget_stats["never_correct"]),
                        "count all_first_learnt": np.count_nonzero(np.isfinite(self.forget_stats["first_learn_iters"]))}
 
-            wandb.log({k: v for k, v in fs_dict.items()})
+            wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
         return
 
     def on_task_end(self):
@@ -359,15 +360,15 @@ class SupTrainerWForgetStats(SupTrainer):
         self.save_first_learn_iters()
         return
 
-    def _log_forget_scores_hist(self, fs, task, globaliters, bins=20):
+    def _log_forget_scores_hist(self, fs, bins=20):
         if sum(np.isinf(fs)) > 0:
             fs[fs == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
         axs.hist(fs, bins=bins)
-        plt.title(f"Forget scores at {globaliters} steps, task {task}")
+        plt.title(f"Forget scores at {self.global_iters} steps, task {self.current_task}")
         plt.xlabel("Number of forgetting events occurred")
         plt.ylabel("Number of training samples")
-        wandb.log({"forget scores histogram": wandb.Image(fig)})
+        wandb.log({"forget scores histogram": wandb.Image(fig)}, step=self.global_iters)
         plt.close()
         return
 
@@ -535,7 +536,7 @@ class SupTrainerWReplay(SupTrainer):
         ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
         plt.axis('off')
         fig = plt.gcf()
-        wandb.log({"replay memory content": fig})
+        wandb.log({"replay memory content": fig}, step=self.global_iters)
         plt.close()
         return
 
@@ -547,14 +548,14 @@ class SupTrainerWReplay(SupTrainer):
         plt.xlabel("Classes in memory")
         plt.ylabel("Number of images")
         plt.title("Class distribution of images in replay memory")
-        wandb.log({"replay memory class distribution": wandb.Image(fig)})
+        wandb.log({"replay memory class distribution": wandb.Image(fig)}, step=self.global_iters)
         plt.close()
         return
 
     def on_iter_end(self, batch, batch_results):
         is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
-            wandb.log({"count memory content update": self.replay_memory.count_content_update})
+            wandb.log({"count memory content update": self.replay_memory.count_content_update}, step=self.global_iters)
             if not self.replay_memory.empty():
                 self._log_replay_memory_images()
                 self._log_replay_memory_class_distribution()
@@ -562,13 +563,9 @@ class SupTrainerWReplay(SupTrainer):
                 logging.info("Replay memory is currently empty.")
             if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                 self._log_scores_hist(self.replay_memory.precomputed_scores,
-                                      self.current_task,
-                                      self.global_iters,
                                       f"precomputed {self.score_type} scores histogram",
                                       score_type=self.score_type)
                 self._log_scores_hist(self.replay_memory.content["scores"],
-                                      self.current_task,
-                                      self.global_iters,
                                       f"memory content precomputed {self.score_type} scores histogram",
                                       score_type=self.score_type)
                 fs_dict = {"memory content size": len(self.replay_memory.content["indices_in_ds"]),
@@ -576,17 +573,13 @@ class SupTrainerWReplay(SupTrainer):
                            "memory content score max": max(self.replay_memory.content["scores"]),
                            "global score min": min(self.replay_memory.precomputed_scores),
                            "global score max": max(self.replay_memory.precomputed_scores)}
-                wandb.log({k: v for k, v in fs_dict.items()})
+                wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
 
             elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
                 self._log_scores_hist(self.replay_memory.global_forget_scores,
-                                      self.current_task,
-                                      self.global_iters,
                                       "forget scores histogram")
 
                 self._log_scores_hist(self.replay_memory.content["forget_scores"],
-                                      self.current_task,
-                                      self.global_iters,
                                       "memory content forget scores histogram")
 
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
@@ -598,7 +591,7 @@ class SupTrainerWReplay(SupTrainer):
                            "memory content score max": max(self.replay_memory.content["forget_scores"]),
                            "global score min": min(self.replay_memory.global_forget_scores),
                            "global score max": max(self.replay_memory.global_forget_scores)}
-                wandb.log({k: v for k, v in fs_dict.items()})
+                wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
             if is_task_start_or_end_iter and not self.replay_memory.empty():
                 save_path = os.path.join(self.logdir,
                                         "memory_content_idxinds",
@@ -629,27 +622,28 @@ class SupTrainerWReplay(SupTrainer):
                     save_path = os.path.join(self.logdir,
                                             "first_learn_iters",
                                             f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%d')
+                    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
             indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
             self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
             if self.memory_type == "fixedunforgettables":
-                wandb.log({"count first_learns in iter": len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])})
+                count_first_learns = len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])
+                wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
 
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return
 
-    def _log_scores_hist(self, scores_input, task, globaliters, log_name, score_type="forget", bins=20):
+    def _log_scores_hist(self, scores_input, log_name, score_type="forget", bins=20):
         scores = scores_input.copy()
         if sum(np.isinf(scores)) > 0:
             scores[scores == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
         axs.hist(scores, bins=bins)
-        plt.title(f"{score_type.capitalize()} scores at {globaliters} steps, task {task}")
+        plt.title(f"{score_type.capitalize()} scores at {self.global_iters} steps, task {self.current_task}")
         plt.xlabel(f"{score_type.capitalize()} score values")
         plt.ylabel("Number of training examples")
-        wandb.log({log_name: wandb.Image(fig)})
+        wandb.log({log_name: wandb.Image(fig)}, step=self.global_iters)
         plt.close()
         return
