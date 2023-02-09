@@ -1,12 +1,14 @@
-for dir in $2/*
+for dir in $1/*
 do
     if [[ -d $dir ]]; then
-        gin_config="${dir}/config.gin"
+        echo "Processing: ${dir} ..."
+        gin_config=$(find ${dir} -name "*.gin")
+        echo "Using config: ${gin_config}..."
         sema_file="${dir}/_le_monstre_a_mange_ca_"
         if [[ -f "${sema_file}" ]]; then
             continue
         fi
         echo -n > ${sema_file}
-        python $1 --gin_file=${gin_config} > ${dir}/cout 2> ${dir}/cerr
+        python main.py --gin_file=${gin_config} > ${dir}/c.out 2>&1
     fi
 done

@@ -36,7 +36,8 @@ def descartes_builder(name='out', params=[]):
                 gin.bind_parameter(all_params[param_idx], one[param_idx])
 
         config_str = gin.config_str()
-        with open(os.path.join(exp_directory, 'config.gin'), 'w+') as f:
+        config_name = name + f"_{i}.gin"
+        with open(os.path.join(exp_directory, config_name), 'w+') as f:
             f.write(config_str)
         i += 1
     pass
