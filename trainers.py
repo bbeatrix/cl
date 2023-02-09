@@ -313,7 +313,7 @@ class SupTrainerWForgetStats(SupTrainer):
         save_path = os.path.join(self.logdir,
                                  "first_learn_iters",
                                  f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
-        np.savetxt(save_path, self.forget_stats["first_learn_iters"], delimiter=', ', fmt='%d')
+        np.savetxt(save_path, self.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
     def save_forget_scores(self):
         save_path = os.path.join(self.logdir,
@@ -597,11 +597,11 @@ class SupTrainerWReplay(SupTrainer):
                                         "memory_content_idxinds",
                                         f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
                 existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
-                np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%d')
+                np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%1.0f')
                 save_path = os.path.join(self.logdir,
                                         "memory_content_update_indices",
                                         f"memory_content_update_indices_task={self.current_task}_globaliter={self.global_iters}.txt")
-                np.savetxt(save_path, np.array(self.replay_memory.content_update_indices), delimiter=', ', fmt='%d')
+                np.savetxt(save_path, np.array(self.replay_memory.content_update_indices), delimiter=', ', fmt='%1.0f')
 
                 if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
                     save_path = os.path.join(self.logdir,
