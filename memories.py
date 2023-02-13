@@ -468,3 +468,39 @@ class ForgettablesMemory(Memory):
         if global_iters % self.log_score_freq == 0:
             self._save_forget_scores(global_iters)
         return
+
+
+def test():
+    IMAGE_SHAPE=(1,)
+    TARGET_SHAPE=(1,)
+    device="cuda"
+    memory = FixedUnforgettablesMemory(
+        image_shape=IMAGE_SHAPE,
+        target_shape=TARGET_SHAPE,
+        device=device,
+        size_limit=100,
+        score_order='high',
+        update_content_scores=True,
+        check_containing=True,
+        num_train_examples=50000)
+
+    BATCH_SIZE=50
+    DATASET_SIZE=50000
+    xs = torch.tensor(np.random.rand(*((DATASET_SIZE,) + IMAGE_SHAPE)))
+    ys = torch.tensor(np.zeros((DATASET_SIZE,)+ IMAGE_SHAPE, dtype=np.int32))
+    ys[DATASET_SIZE//2:] = torch.tensor(np.ones((DATASET_SIZE//2, *IMAGE_SHAPE)))
+
+    for i in range(1000):
+        ii = i % (DATASET_SIZE // BATCH_SIZE)
+        xb = xs[ii*BATCH_SIZE:(ii+1)*BATCH_SIZE]
+        yb = ys[ii*BATCH_SIZE:(ii+1)*BATCH_SIZE]
+
+        if i == 999:
+            memory.on_batch_end(xb, yb, np.arange(ii*BATCH_SIZE, (ii+1)*BATCH_SIZE), np.zeros((BATCH_SIZE,)), i)
+        else:
+            memory.on_batch_end(xb, yb, np.arange(ii*BATCH_SIZE, (ii+1)*BATCH_SIZE), np.ones((BATCH_SIZE,)), i)
+
+    print(memory.content)
+
+if __name__ == "__main__":
+    test()
