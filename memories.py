@@ -331,11 +331,12 @@ class FixedUnforgettablesMemory(Memory):
             else:
                 scores_in_content = self.content["forget_scores"][self.target2indices[target_value]]
                 replace_idx_in_content = None
-                if self.score_order == "low" and np.max(scores_in_content) > update_forget_score:
+                unforgettables_conditions = (self.score_order == "unforgettables" and np.max(scores_in_content) > update_forget_score == 0)
+                if (self.score_order == "low" and np.max(scores_in_content) > update_forget_score > 0) or (unforgettables_conditions):
                     replace_score_idx = np.argmax(scores_in_content)
                     replace_idx_in_content = self.target2indices[target_value][replace_score_idx]
                     self.target2indices[target_value].pop(replace_score_idx)
-                elif self.score_order == "high" and np.min(scores_in_content) < update_forget_score:
+                elif self.score_order == "high" and np.min(scores_in_content) < update_forget_score > 0:
                     replace_score_idx = np.argmin(scores_in_content)
                     replace_idx_in_content = self.target2indices[target_value][replace_score_idx]
                     self.target2indices[target_value].pop(replace_score_idx)

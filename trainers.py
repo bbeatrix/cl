@@ -422,7 +422,7 @@ class SupTrainerWReplay(SupTrainer):
             err_message = "Parameter value must be set in config file"
             assert (self.precomputed_scores_path is not None) == True, err_message
             assert (self.score_type  in ["forget", "consistency"]) == True, err_message
-            assert (self.score_order in ["low", "high", "caws", "unforgettables", "neverlearnt"]) == True, err_message
+            assert (self.score_order in ["low", "high", "caws", "unforgettables"]) == True, err_message
             self.replay_memory = memories.FixedScoresRankMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
@@ -469,7 +469,7 @@ class SupTrainerWReplay(SupTrainer):
                 os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
         elif self.memory_type == "fixedunforgettables":
             err_message = "Parameter value must be set in config file"
-            assert (self.score_order in ["low", "high", "best"]) == True, err_message
+            assert (self.score_order in ["low", "high", "unforgettables"]) == True, err_message
             assert (self.update_content_scores in [True, False]) == True, err_message
             assert (self.check_containing in [True, False]) == True, err_message
             self.replay_memory = memories.FixedUnforgettablesMemory(
