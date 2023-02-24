@@ -39,7 +39,7 @@ def trainer_maker(target_type, *args):
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
-                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR):
+                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False):
         self.device = device
         self.model = model
         self.data = data
@@ -51,6 +51,7 @@ class Trainer:
         self.log_interval = log_interval
         self.iters = iters
         self.epochs_per_task = epochs_per_task
+        self.test_on_trainsets = test_on_trainsets
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -106,7 +107,7 @@ class Trainer:
         return
 
     def on_iter_end(self, batch, batch_results):
-        is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
+        is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
 
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
             self._log_train_images(batch)
@@ -136,7 +137,9 @@ class Trainer:
                 wandb.log({metric: result}, step=self.global_iters)
             results_to_log = None
 
-            self.test()
+            self.test(self.test_loaders)
+            if self.test_on_trainsets is True:
+                self.test(self.train_loaders, testing_on_trainsets=True)
         return
 
     def on_task_end(self):
@@ -144,13 +147,15 @@ class Trainer:
                          os.path.join(self.logdir,
                                       "model_checkpoints"
                                       f"model_task={self.current_task}_globaliter={self.global_iters}"))
-        self.test()
+        self.test(self.test_loaders)
+        if self.test_on_trainsets is True:
+            self.test(self.train_loaders, testing_on_trainsets=True)
         self._log_avg_accuracy_and_forgetting()
 
-    def test(self):
+    def test(self, dataset_loaders, testing_on_trainsets=False):
         with torch.no_grad():
             self.model.eval()
-            for idx, current_test_loader in enumerate(self.test_loaders):
+            for idx, current_test_loader in enumerate(dataset_loaders):
                 test_results = None
                 for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
 
@@ -164,11 +169,18 @@ class Trainer:
                         for metric in test_results.keys():
                             test_results[metric] += test_batch_results[metric].data
 
-                test_results = {f'task {idx+1} test_{key}': value / (test_batch_count + 1)
-                                for key, value in test_results.items()}
+                if testing_on_trainsets:
+                    test_results = {f'task {idx+1} test_on_trainsets_{key}': value / (test_batch_count + 1)
+                                    for key, value in test_results.items()}
+                    
+                    template = ("Task {}/{}x{}\tTest on trainsets\tglobal iter: {} ({:.2f}%), metrics: "
+                                + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
+                else:
+                    test_results = {f'task {idx+1} test_{key}': value / (test_batch_count + 1)
+                                    for key, value in test_results.items()}
+                    template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
+                                + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
 
-                template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
-                            + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
                 logging.info(template.format(idx + 1,
                                              self.num_tasks,
                                              self.num_cycles,
@@ -553,7 +565,7 @@ class SupTrainerWReplay(SupTrainer):
         return
 
     def on_iter_end(self, batch, batch_results):
-        is_task_start_or_end_iter = self.iter_count < 5 or self.iter_count > self.iters_per_task - 5
+        is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
             wandb.log({"count memory content update": self.replay_memory.count_content_update}, step=self.global_iters)
             if not self.replay_memory.empty():
