@@ -13,12 +13,16 @@ class Data:
                     'supervised contrastive', 'unsupervised contrastive', 'supcon with simpreserving',
                     'supcon with interpolation']
 
+    TASKS_SPLIT_TYPES = ["cl", "forgetstatbased", "cl_forgetstatbased", "random"]
+
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
-                 apply_vit_transforms=False, tasks_random_splits=False, simple_augmentation=False,
-                 normalization=False):
+                 apply_vit_transforms=False, simple_augmentation=False, normalization=False,
+                 tasks_split_type="cl", forgetstats_path=None, randomsubset_task_datasets=False, randomsubsets_size=5000):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
+        err_message = "Tasks' split type must be element of {}".format(self.TASKS_SPLIT_TYPES)
+        assert (tasks_split_type in self.TASKS_SPLIT_TYPES) == True, err_message
 
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
@@ -30,9 +34,12 @@ class Data:
         self.num_tasks = num_tasks
         self.num_cycles = num_cycles
         self.apply_vit_transforms = apply_vit_transforms
-        self.tasks_random_splits = tasks_random_splits
         self.simple_augmentation = simple_augmentation
         self.normalization = normalization
+        self.tasks_split_type = tasks_split_type
+        self.forgetstats_path = forgetstats_path
+        self.randomsubset_task_datasets = randomsubset_task_datasets
+        self.randomsubsets_size = randomsubsets_size
 
         self._setup()
 
@@ -170,28 +177,88 @@ class Data:
             self.train_dataset = DatasetWIndices(self.train_dataset)
             self.test_dataset = DatasetWIndices(self.test_dataset)
 
+    def _create_randomsubset_task_datasets(self):
+        logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
+
+        for idx, ds in enumerate(self.train_task_datasets):
+            err_message =  f"Length of {idx}. task dataset should be greater than the subset size {self.randomsubsets_size}."
+            assert len(ds) >= self.randomsubsets_size, err_message
+
+            indices_permutation = np.random.permutation(len(ds))
+            subset_indices = indices_permutation[:self.randomsubsets_size]
+
+            train_ds_subset = torch.utils.data.Subset(ds, subset_indices)
+            self.train_task_datasets[idx] = train_ds_subset
+        return
+
+    def _create_random_split_task_datasets(self):
+        assert (self.num_tasks == 2), "With the random split 2 tasks are allowed only"
+        logging.info(f"Splitting training dataset into {self.num_tasks} random parts.")
+        err_message =  "Number of tarining examples should be divisible by the number of tasks."
+        assert len(self.train_dataset) % self.num_tasks == 0, err_message
+
+        indices_permutation = np.random.permutation(len(self.train_dataset))
+        num_concurrent_indices = len(self.train_dataset) // self.num_tasks
+
+        for i in range(0, len(self.train_dataset), num_concurrent_indices):
+            split_indices = indices_permutation[i: i + num_concurrent_indices]
+
+            train_ds_subset = torch.utils.data.Subset(self.train_dataset,
+                                                      split_indices)
+            self.train_task_datasets.append(train_ds_subset)
+            self.test_task_datasets.append(self.test_dataset)
+        logging.info(f"Number of train tasks: {len(self.train_task_datasets)}")
+        return
+
+    def _create_forgetstatbased_split_task_datasets(self):
+        assert (self.num_tasks == 2), "With the forgetstat based split 2 tasks are allowed only"
+        logging.info(f"Splitting training dataset into {self.num_tasks} parts based on forgetting stats.")
+        assert (self.forgetstats_path is not None) == True, "Parameter should be set in config file"
+
+        self.forgetstats_with_labels = np.load(self.forgetstats_path)
+        if self.tasks_split_type == "cl_forgetstatbased":
+            train_datasets_to_split = self.train_task_datasets
+            self.train_task_datasets = []
+            test_datasets_to_split = self.test_task_datasets
+            self.test_task_datasets = []
+            self.num_tasks *= 2
+        elif self.tasks_split_type == "forgetstatbased":
+            train_datasets_to_split = [self.train_dataset]
+            self.train_task_datasets_indices_in_orig = [list(range(0, len(self.train_dataset)))]
+            test_datasets_to_split = [self.test_dataset]
+
+        for idx, train_ds in enumerate(train_datasets_to_split):
+            ds_forgetstats_with_labels = self.forgetstats_with_labels[:, self.train_task_datasets_indices_in_orig[idx]]
+            unforgettables_selected_indices = np.where(ds_forgetstats_with_labels[0] == 0)[0]
+
+            forgettables_indices = np.where(ds_forgetstats_with_labels[0] > 0)[0]
+            sorted_forgettables_indices = np.argsort(self.forgetstats_with_labels[0][forgettables_indices])
+            forgettables_selected_indices = forgettables_indices[sorted_forgettables_indices]
+
+            train_ds_subset1 = torch.utils.data.Subset(train_ds,
+                                                       forgettables_selected_indices)
+            self.train_task_datasets.append(train_ds_subset1)
+            self.test_task_datasets.append(test_datasets_to_split[idx])
+
+            train_ds_subset2 = torch.utils.data.Subset(train_ds,
+                                                       unforgettables_selected_indices)
+            self.train_task_datasets.append(train_ds_subset2)
+            self.test_task_datasets.append(test_datasets_to_split[idx])
+
+        return
 
     def _create_tasks(self):
         self.train_task_datasets, self.test_task_datasets = [], []
+        self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
 
-        if self.num_tasks > 1:
-            if self.tasks_random_splits:
-                logging.info(f"Splitting training dataset into {self.num_tasks} random parts.")
-                indices_permutation = np.random.permutation(len(self.train_dataset))
-                err_message =  "Number of tarining examples should be divisible by the number of tasks."
-                assert len(self.train_dataset) % self.num_tasks == 0, err_message
+        if self.num_tasks == 1:
+            self.labels = np.array([i for i in range(self.num_classes)])
+            self.train_task_datasets = [self.train_dataset]
+            self.test_task_datasets = [self.test_dataset]
+            self.train_task_datasets_indices_in_orig = [list(range(len(self.train_dataset)))]
+            self.test_task_datasets_indices_in_orig = [list(range(len(self.test_dataset)))]
 
-                num_concurrent_indices = len(self.train_dataset) // self.num_tasks
-
-                for i in range(0, len(self.train_dataset), num_concurrent_indices):
-                    split_indices = indices_permutation[i: i + num_concurrent_indices]
-
-                    train_ds_subset = torch.utils.data.Subset(self.train_dataset,
-                                                            split_indices)
-                    self.train_task_datasets.append(train_ds_subset)
-                    self.test_task_datasets.append(self.test_dataset)
-                logging.info("Number of train tasks: ", len(self.train_task_datasets))
-                return
+        elif self.num_tasks > 1 and self.tasks_split_type  in ["cl", "cl_forgetstatbased"]:
             logging.info(f"Splitting training and test datasets into {self.num_tasks} parts for cl.")
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
@@ -215,14 +282,26 @@ class Data:
                                                          testset_filtered_indices)
                 self.train_task_datasets.append(train_ds_subset)
                 self.test_task_datasets.append(test_ds_subset)
-        else:
-            self.labels = np.array([i for i in range(self.num_classes)])
-            self.train_task_datasets = [self.train_dataset]
-            self.test_task_datasets = [self.test_dataset]
+                self.train_task_datasets_indices_in_orig.append(trainset_filtered_indices)
+                self.test_task_datasets_indices_in_orig.append(testset_filtered_indices)
 
+        elif self.tasks_split_type in ["forgetstatbased", "cl_forgetstatbased"]:
+            self._create_forgetstatbased_split_task_datasets()
+
+        elif self.tasks_split_type == "random":
+            self._create_random_split_task_datasets()
+
+        if self.randomsubset_task_datasets == True:
+            self._create_randomsubset_task_datasets()
+
+        logging.info(f"Number of train tasks: {len(self.train_task_datasets)}")
         err_message = "Number of train datasets and the number of test datasets should be equal."
         assert len(self.train_task_datasets) == len(self.test_task_datasets), err_message
 
+        logging.info(f"Number of train examples per train task: {[len(ds) for ds in self.train_task_datasets]}")
+        logging.info(f"Number of test examples per test task: {[len(ds) for ds in self.test_task_datasets]}")
+
+        return
 
     def _create_loaders(self):
         self.num_classes = (self.num_classes,)
