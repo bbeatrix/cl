@@ -257,6 +257,7 @@ class Data:
     def _create_tasks(self):
         self.train_task_datasets, self.test_task_datasets = [], []
         self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
+        self.labels = np.array([i for i in range(self.num_classes)])
 
         if self.num_tasks == 1:
             self.labels = np.array([i for i in range(self.num_classes)])
@@ -308,6 +309,9 @@ class Data:
         logging.info(f"Number of train examples per train task: {[len(ds) for ds in self.train_task_datasets]}")
         logging.info(f"Number of test examples per test task: {[len(ds) for ds in self.test_task_datasets]}")
 
+        for idx, ds in enumerate(self.train_task_datasets):
+            num_examples_per_class_per_ds = [len([1 for i in range(len(ds)) if ds[i][1]==c]) for c in self.labels]
+            logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
         return
 
     def _create_loaders(self):
