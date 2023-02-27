@@ -1,4 +1,7 @@
-ExperimentManager.seed = 1
+descartes_builder.name = 'cifar10_supwforgetstats_studysetup_tasksrandomsplits_seedgrid'
+descartes_builder.params = ['ExperimentManager.seed']
+
+ExperimentManager.seed = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 ExperimentManager.logdir = './outputs'
 
 Data.dataset_name = 'cifar10'
