@@ -293,7 +293,7 @@ class Data:
                 self.train_task_datasets_indices_in_orig.append(trainset_filtered_indices)
                 self.test_task_datasets_indices_in_orig.append(testset_filtered_indices)
 
-        elif self.tasks_split_type in ["forgetstatbased", "cl_forgetstatbased"]:
+        if self.tasks_split_type in ["forgetstatbased", "cl_forgetstatbased"]:
             self._create_forgetstatbased_split_task_datasets()
 
         elif self.tasks_split_type == "random":
