@@ -391,7 +391,7 @@ class SupTrainerWReplay(SupTrainer):
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
-                 score_order=None, update_content_scores=None, check_containing=None):
+                 score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -413,6 +413,7 @@ class SupTrainerWReplay(SupTrainer):
             self.score_order = score_order
             self.update_content_scores = update_content_scores
             self.check_containing = check_containing
+            self.test_on_memcontent = test_on_memcontent
             self.init_memory()
 
     def init_memory(self):
@@ -540,6 +541,31 @@ class SupTrainerWReplay(SupTrainer):
                    'corrects': corrects}
         return results
 
+    def _test_on_memcontent(self, mem_content):
+        print("mem content targets shape", mem_content["targets"].shape, "flattened shape", mem_content["targets"].flatten().shape)
+        x_memcontent = (mem_content["images"], mem_content["targets"].flatten().type(torch.LongTensor))
+        with torch.no_grad():
+            self.model.eval()
+            test_results = self.test_on_batch(x_memcontent)
+
+            test_results = {key: value for key, value in test_results.items()
+                            if torch.is_tensor(value) == True}
+
+            test_results = {f'memcontent test_{key}': value for key, value in test_results.items()}
+            template = ("Task {}/{}x{}\tTest on memcontent\tglobal iter: {} ({:.2f}%), metrics: "
+                        + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
+
+            logging.info(template.format(self.current_task,
+                                        self.num_tasks,
+                                        self.num_cycles,
+                                        self.global_iters,
+                                        float(self.global_iters) / self.iters * 100.,
+                                        *[item.data for item in test_results.values()]))
+
+            for metric, result in test_results.items():
+                wandb.log({metric: result}, step=self.global_iters)
+        return
+
     def _log_replay_memory_images(self):
         replay_images, replay_target = self.replay_memory.get_samples(max(self.replay_memory_size, 500))
         replay_images = self.data.inverse_normalize(replay_images.detach().cpu())
@@ -571,6 +597,8 @@ class SupTrainerWReplay(SupTrainer):
             if not self.replay_memory.empty():
                 self._log_replay_memory_images()
                 self._log_replay_memory_class_distribution()
+                if self.test_on_memcontent:
+                    self._test_on_memcontent(self.replay_memory.content)
             else:
                 logging.info("Replay memory is currently empty.")
             if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
@@ -637,7 +665,6 @@ class SupTrainerWReplay(SupTrainer):
                     np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
-            indices_in_ds = batch[2]
             corrects = batch_results["corrects"]
             self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
             if self.memory_type == "fixedunforgettables":
