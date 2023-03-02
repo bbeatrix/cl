@@ -542,7 +542,6 @@ class SupTrainerWReplay(SupTrainer):
         return results
 
     def _test_on_memcontent(self, mem_content):
-        print("mem content targets shape", mem_content["targets"].shape, "flattened shape", mem_content["targets"].flatten().shape)
         x_memcontent = (mem_content["images"], mem_content["targets"].flatten().type(torch.LongTensor))
         with torch.no_grad():
             self.model.eval()
