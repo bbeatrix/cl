@@ -20,7 +20,7 @@ class Data:
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
                  apply_vit_transforms=False, simple_augmentation=False, normalization=False,
                  tasks_split_type="cl", forgetstats_path=None, tasks_order="forgettables_first", 
-                 randomsubset_task_datasets=False, randomsubsets_size=5000):
+                 randomsubset_task_datasets=False, randomsubsets_size=5000, use_testset_for_training=False):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         err_message = "Tasks' split type must be element of {}".format(self.TASKS_SPLIT_TYPES)
@@ -45,6 +45,7 @@ class Data:
         self.tasks_order = tasks_order
         self.randomsubset_task_datasets = randomsubset_task_datasets
         self.randomsubsets_size = randomsubsets_size
+        self.use_testset_for_training = use_testset_for_training
 
         self._setup()
 
@@ -182,6 +183,11 @@ class Data:
             self.train_dataset = DatasetWIndices(self.train_dataset)
             self.test_dataset = DatasetWIndices(self.test_dataset)
 
+        if self.use_testset_for_training:
+            logging.info("Using both the train and test set for training, concatenating them now")
+            self.train_dataset = torch.utils.data.ConcatDataset([self.train_dataset, self.test_dataset])
+            logging.info(f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}")
+
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
 
@@ -309,8 +315,11 @@ class Data:
         logging.info(f"Number of train examples per train task: {[len(ds) for ds in self.train_task_datasets]}")
         logging.info(f"Number of test examples per test task: {[len(ds) for ds in self.test_task_datasets]}")
 
+        logging.info("Getting number of train examples per class per train task dataset")
         for idx, ds in enumerate(self.train_task_datasets):
-            num_examples_per_class_per_ds = [len([1 for i in range(len(ds)) if ds[i][1]==c]) for c in self.labels]
+            #num_examples_per_class_per_ds = [len([1 for i in range(len(ds)) if ds[i][1]==c]) for c in self.labels]
+            targets = [ds[i][1] for i in range(len(ds))]
+            num_examples_per_class_per_ds = {c: targets.count(c) for c in self.labels}
             logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
         return
 
