@@ -192,7 +192,7 @@ class Data:
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
 
         for idx, ds in enumerate(self.train_task_datasets):
-            err_message =  f"Length of {idx}. task dataset should be greater than the subset size {self.randomsubsets_size}."
+            err_message =  f"Length of {idx}. task dataset {len(ds)} should be greater than the subset size {self.randomsubsets_size}."
             assert len(ds) >= self.randomsubsets_size, err_message
 
             indices_permutation = np.random.permutation(len(ds))
