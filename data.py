@@ -200,6 +200,7 @@ class Data:
 
             train_ds_subset = torch.utils.data.Subset(ds, subset_indices)
             self.train_task_datasets[idx] = train_ds_subset
+            self.train_task_datasets_indices_in_orig[idx] = self.train_task_datasets_indices_in_orig[idx][subset_indices]
         return
 
     def _create_random_split_task_datasets(self):
@@ -233,13 +234,15 @@ class Data:
             test_datasets_to_split = self.test_task_datasets
             self.test_task_datasets = []
             self.num_tasks *= 2
+            train_task_datasets_indices_in_orig = self.train_task_datasets_indices_in_orig
+            self.train_task_datasets_indices_in_orig = []
         elif self.tasks_split_type == "forgetstatbased":
             train_datasets_to_split = [self.train_dataset]
-            self.train_task_datasets_indices_in_orig = [list(range(0, len(self.train_dataset)))]
             test_datasets_to_split = [self.test_dataset]
+            train_task_datasets_indices_in_orig = [list(range(0, len(self.train_dataset)))]
 
         for idx, train_ds in enumerate(train_datasets_to_split):
-            ds_forgetstats_with_labels = self.forgetstats_with_labels[:, self.train_task_datasets_indices_in_orig[idx]]
+            ds_forgetstats_with_labels = self.forgetstats_with_labels[:, train_task_datasets_indices_in_orig[idx]]
             unforgettables_selected_indices = np.where(ds_forgetstats_with_labels[0] == 0)[0]
 
             forgettables_indices = np.where(ds_forgetstats_with_labels[0] > 0)[0]
@@ -249,12 +252,14 @@ class Data:
             train_ds_subset1 = torch.utils.data.Subset(train_ds,
                                                        forgettables_selected_indices)
             train_ds_subset2 = torch.utils.data.Subset(train_ds,
-                                            unforgettables_selected_indices)
+                                                       unforgettables_selected_indices)
             
             if self.tasks_order == "forgettables_first":
                 self.train_task_datasets.extend([train_ds_subset1, train_ds_subset2])
+                self.train_task_datasets_indices_in_orig.extend([forgettables_selected_indices, unforgettables_selected_indices])
             else:
                 self.train_task_datasets.extend([train_ds_subset2, train_ds_subset1])
+                self.train_task_datasets_indices_in_orig.extend([unforgettables_selected_indices, forgettables_selected_indices])
 
             self.test_task_datasets.extend([test_datasets_to_split[idx], test_datasets_to_split[idx]])
 

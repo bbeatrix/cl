@@ -442,6 +442,7 @@ class SupTrainerWReplay(SupTrainer):
                 device=self.device,
                 size_limit=self.replay_memory_size,
                 precomputed_scores_path=self.precomputed_scores_path,
+                dataset_indices_in_orig=[idx for idxl in self.data.train_task_datasets_indices_in_orig for idx in idxl],
                 score_order=self.score_order,
                 score_type=self.score_type,
             )

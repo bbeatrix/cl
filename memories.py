@@ -165,11 +165,14 @@ class PrecomputedScoresRankMemory(FixedMemory):
 
 
 class FixedScoresRankMemory(FixedMemory):
-    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path, score_order, score_type):
+    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path, dataset_indices_in_orig, score_order, score_type):
         super().__init__(image_shape, target_shape, device, size_limit)
 
-        self.precomputed_scores_with_labels = np.load(precomputed_scores_path)
-        self.precomputed_scores = self.precomputed_scores_with_labels[0]
+        self.global_precomputed_scores_with_labels = np.load(precomputed_scores_path)
+        self.precomputed_scores = self.global_precomputed_scores_with_labels[0]
+        self.dataset_indices_in_orig = dataset_indices_in_orig
+        self.trainset_precomputed_scores_with_labels = self.global_precomputed_scores_with_labels[:, self.dataset_indices_in_orig]
+
         self.score_type = score_type
         self.score_order = score_order
         self.content.update({"scores": -100 * np.ones(self.size_limit, dtype=float)})
@@ -180,8 +183,8 @@ class FixedScoresRankMemory(FixedMemory):
         self.content["scores"][idx] = self.precomputed_scores[update_index_in_ds]
 
     def _select_indices_per_target(self, target):
-        class_indices = np.where(self.precomputed_scores_with_labels[1] == target)[0]
-        class_scores = self.precomputed_scores_with_labels[0][class_indices]
+        class_indices = np.where(self.trainset_precomputed_scores_with_labels[1] == target)[0]
+        class_scores = self.trainset_precomputed_scores_with_labels[0][class_indices]
         # when encountering the first item we do not want to populate the whole memory for sure
         selection_size = min(self.size_limit//2, self.size_limit_per_target) 
 
@@ -210,7 +213,7 @@ class FixedScoresRankMemory(FixedMemory):
                 unforgettables_indices = np.where(class_scores == 0)[0]
                 selected_indices = unforgettables_indices[:selection_size]
 
-        self.selected_indices_per_class[target] = list(class_indices[selected_indices])
+        self.selected_indices_per_class[target] = [self.dataset_indices_in_orig[i] for i in class_indices[selected_indices]]
         return
 
     def get_index_of_replace(self):
@@ -235,6 +238,7 @@ class FixedScoresRankMemory(FixedMemory):
             self.size_limit_per_target = self.size_limit // len(self.size_per_target)
             self._select_indices_per_target(target_value)
             logging.info(f"Added new target {target_value}, new size_limit_per_target is {self.size_limit_per_target}")
+            logging.info(f"Number of selected indices per class: {[(k, len(v)) for k, v in self.selected_indices_per_class.items()]}")
         if update_index_in_ds.item() in self.selected_indices_per_class[target_value] and update_index_in_ds.item() not in self.content["indices_in_ds"]:
             if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
                 idx = self.size
