@@ -219,6 +219,7 @@ class Data:
                                                       split_indices)
             self.train_task_datasets.append(train_ds_subset)
             self.test_task_datasets.append(self.test_dataset)
+            self.train_task_datasets_indices_in_orig.append(split_indices)
         logging.info(f"Number of train tasks: {len(self.train_task_datasets)}")
         return
 
