@@ -190,10 +190,8 @@ class Data:
 
         self.control_group = {}
         train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
-        #print(train_targets)
         for l in range(self.num_classes):
             index_in_ds = np.where(train_targets == l)[0][0]
-            #print(index_in_ds)
             self.control_group[l] = self.train_dataset[index_in_ds]
 
 
