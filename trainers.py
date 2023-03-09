@@ -39,7 +39,8 @@ def trainer_maker(target_type, *args):
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
-                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False):
+                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
+                 test_on_controlgroup=False):
         self.device = device
         self.model = model
         self.data = data
@@ -52,6 +53,7 @@ class Trainer:
         self.iters = iters
         self.epochs_per_task = epochs_per_task
         self.test_on_trainsets = test_on_trainsets
+        self.test_on_controlgroup = test_on_controlgroup
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -107,6 +109,9 @@ class Trainer:
         return
 
     def on_iter_end(self, batch, batch_results):
+        if self.test_on_controlgroup:
+            self._log_controlgroup_predictions()
+
         is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
 
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
@@ -133,8 +138,7 @@ class Trainer:
                                          self.iters_per_task,
                                          *[item.data for item in results_to_log.values()]))
 
-            for metric, result in results_to_log.items():
-                wandb.log({metric: result}, step=self.global_iters)
+            wandb.log({metric: result for metric, result in results_to_log.items()}, step=self.global_iters)
             results_to_log = None
 
             self.test(self.test_loaders)
@@ -188,8 +192,7 @@ class Trainer:
                                              float(self.global_iters) / self.iters * 100.,
                                              *[item.data for item in test_results.values()]))
 
-                for metric, result in test_results.items():
-                    wandb.log({metric: result}, step=self.global_iters)
+                wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
         return
 
     def _log_train_images(self, batch):
@@ -247,6 +250,27 @@ class Trainer:
                                     "task_accuracies",
                                     f"task_accuracies_after_task={self.current_task}_globaliter={self.global_iters}.txt")
             np.savetxt(save_path, np.array([np.array(v) for v in self.task_accuracies.values()]), delimiter=', ', fmt='%s')
+        return
+
+    def _log_controlgroup_predictions(self):
+        logging.info("Logging info on control group images' predictions")
+        control_group = self.data.control_group
+        controlgroup_images = torch.stack([item[0] for item in control_group.values()])
+
+        controlgroup_images = controlgroup_images.to(self.device)
+        controlgroup_model_outputs = self.model(controlgroup_images)
+        pred_dim = controlgroup_model_outputs.shape[-1]
+        for idx, cgitem in enumerate(control_group.values()):
+            wandb.log({f"cg pred/cg target {cgitem[1]} image prediction {c}": controlgroup_model_outputs[idx][c] for c in range(pred_dim)}, step=self.global_iters)
+
+        images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
+        fig = plt.figure(figsize = (20, 40))
+        image_grid = torchvision.utils.make_grid(images)
+        ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
+        plt.axis('off')
+        fig = plt.gcf()
+        wandb.log({"control group images": fig}, step=self.global_iters)
+        plt.close()
         return
 
 

@@ -188,6 +188,15 @@ class Data:
             self.train_dataset = torch.utils.data.ConcatDataset([self.train_dataset, self.test_dataset])
             logging.info(f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}")
 
+        self.control_group = {}
+        train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
+        #print(train_targets)
+        for l in range(self.num_classes):
+            index_in_ds = np.where(train_targets == l)[0][0]
+            #print(index_in_ds)
+            self.control_group[l] = self.train_dataset[index_in_ds]
+
+
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
 
