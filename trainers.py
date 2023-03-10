@@ -262,7 +262,12 @@ class Trainer:
         pred_dim = controlgroup_model_outputs.shape[-1]
         for idx, cgitem in enumerate(control_group.values()):
             wandb.log({f"cg pred/cg target {cgitem[1]} image prediction {c}": controlgroup_model_outputs[idx][c] for c in range(pred_dim)}, step=self.global_iters)
-
+            right_pred = controlgroup_model_outputs[idx][cgitem[1]]
+            max_pred = max(controlgroup_model_outputs[idx])
+            wandb.log({f"cg pred diff/cg target {cgitem[1]} image prediction diff from max": right_pred - max_pred}, self.global_iters)
+            softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[idx], dim=-1)
+            print(softmax_pred)
+            wandb.log({f"cg pred softmax/cg target {cgitem[1]} image softmax prediction {c}": softmax_pred[c] for c in range(pred_dim)}, self.global_iters)
         images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
         fig = plt.figure(figsize = (20, 40))
         image_grid = torchvision.utils.make_grid(images)
