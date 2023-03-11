@@ -420,7 +420,7 @@ class SupTrainerWReplay(SupTrainer):
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
                  score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False,
-                 use_soft_forgets=False, softforget_pred_threshold=0.95):
+                 use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -445,6 +445,7 @@ class SupTrainerWReplay(SupTrainer):
             self.test_on_memcontent = test_on_memcontent
             self.use_soft_forgets = use_soft_forgets
             self.softforget_pred_threshold = softforget_pred_threshold
+            self.replace_newest = replace_newest
             self.init_memory()
 
     def init_memory(self):
@@ -527,6 +528,7 @@ class SupTrainerWReplay(SupTrainer):
                 check_containing=self.check_containing,
                 use_soft_forgets=self.use_soft_forgets,
                 softforget_pred_threshold=self.softforget_pred_threshold,
+                replace_newest=self.replace_newest,
                 num_train_examples=len(self.data.train_dataset),
             )
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):

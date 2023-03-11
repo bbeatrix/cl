@@ -253,7 +253,7 @@ class FixedScoresRankMemory(FixedMemory):
 
 class FixedUnforgettablesMemory(Memory):
     def __init__(self, image_shape, target_shape, device, size_limit, score_order, update_content_scores, check_containing,
-                 use_soft_forgets, softforget_pred_threshold, num_train_examples):
+                 use_soft_forgets, softforget_pred_threshold, replace_newest, num_train_examples):
         super().__init__(image_shape, target_shape, device, size_limit)
 
         self.score_order = score_order
@@ -263,6 +263,7 @@ class FixedUnforgettablesMemory(Memory):
         self.size_per_target = {}
         self.use_soft_forgets = use_soft_forgets
         self.softforget_pred_threshold = softforget_pred_threshold
+        self.replace_newest = replace_newest
         self.num_train_examples = num_train_examples
 
         self.forget_stats = {
@@ -319,10 +320,14 @@ class FixedUnforgettablesMemory(Memory):
         for target, size in self.size_per_target.items():
             if size > self.size_limit_per_target:
                 scores = self.content["forget_scores"][self.target2indices[target]]
-                if self.score_order == "low":
-                    replace_score_idx = np.argwhere(scores == np.max(scores)).flatten()[-1]
+                if self.replace_newest:
+                    select_idx = -1
                 else:
-                    replace_score_idx = np.argwhere(scores == np.min(scores)).flatten()[-1]
+                    select_idx = 0
+                if self.score_order == "low":
+                    replace_score_idx = np.argwhere(scores == np.max(scores)).flatten()[select_idx]
+                else:
+                    replace_score_idx = np.argwhere(scores == np.min(scores)).flatten()[select_idx]
                 idx = self.target2indices[target][replace_score_idx]
                 self.target2indices[target].pop(replace_score_idx)
                 self.size_per_target[target] -= 1
