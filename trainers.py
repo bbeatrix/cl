@@ -266,7 +266,6 @@ class Trainer:
             max_pred = max(controlgroup_model_outputs[idx])
             wandb.log({f"cg pred diff/cg target {cgitem[1]} image prediction diff from max": right_pred - max_pred}, self.global_iters)
             softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[idx], dim=-1)
-            print(softmax_pred)
             wandb.log({f"cg pred softmax/cg target {cgitem[1]} image softmax prediction {c}": softmax_pred[c] for c in range(pred_dim)}, self.global_iters)
         images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
         fig = plt.figure(figsize = (20, 40))
@@ -420,7 +419,8 @@ class SupTrainerWReplay(SupTrainer):
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
-                 score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False):
+                 score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False,
+                 use_soft_forgets=False, softforget_pred_threshold=0.95):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -443,6 +443,8 @@ class SupTrainerWReplay(SupTrainer):
             self.update_content_scores = update_content_scores
             self.check_containing = check_containing
             self.test_on_memcontent = test_on_memcontent
+            self.use_soft_forgets = use_soft_forgets
+            self.softforget_pred_threshold = softforget_pred_threshold
             self.init_memory()
 
     def init_memory(self):
@@ -523,6 +525,8 @@ class SupTrainerWReplay(SupTrainer):
                 score_order=self.score_order,
                 update_content_scores=self.update_content_scores,
                 check_containing=self.check_containing,
+                use_soft_forgets=self.use_soft_forgets,
+                softforget_pred_threshold=self.softforget_pred_threshold,
                 num_train_examples=len(self.data.train_dataset),
             )
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
@@ -566,9 +570,13 @@ class SupTrainerWReplay(SupTrainer):
         corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
         accuracy_mean = torch.mean(torch.eq(predictions, target).float())
 
+        softmax_output = torch.nn.functional.softmax(model_output, dim=-1).detach()
+        softmax_preds = softmax_output.gather(1, target.unsqueeze(dim=1)).squeeze().cpu().numpy()
+
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy_mean,
-                   'corrects': corrects}
+                   'corrects': corrects,
+                   'softmax_preds': softmax_preds}
         return results
 
     def _test_on_memcontent(self, mem_content):
@@ -651,6 +659,9 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_scores_hist(self.replay_memory.content["forget_scores"],
                                       "memory content forget scores histogram")
 
+                self._log_scores_hist(self.replay_memory.forget_stats["num_softforgets"],
+                                      "soft forget scores histogram")
+
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
                            "count never_correct": len(self.replay_memory.forget_stats["never_correct"]),
@@ -694,12 +705,14 @@ class SupTrainerWReplay(SupTrainer):
                     np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
-            corrects = batch_results["corrects"]
-            self.replay_memory.on_batch_end(*batch, corrects, self.global_iters)
+            self.replay_memory.on_batch_end(*batch, batch_results["corrects"], batch_results["softmax_preds"], self.global_iters)
             if self.memory_type == "fixedunforgettables":
                 count_first_learns = len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])
                 wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
-
+                fs_dict = {"forgetstats/num forgets in iter": self.replay_memory.num_forgets_in_iter,
+                           "forgetstats/num softforgets in iter": self.replay_memory.num_softforgets_in_iter,
+                           "forgetstats/num common indices forgetting_and_softforgetting": self.replay_memory.num_common_forgetting_and_softforgetting}
+                wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
         super(SupTrainerWReplay, self).on_iter_end(batch, batch_results)
         return
 

@@ -253,7 +253,7 @@ class FixedScoresRankMemory(FixedMemory):
 
 class FixedUnforgettablesMemory(Memory):
     def __init__(self, image_shape, target_shape, device, size_limit, score_order, update_content_scores, check_containing,
-                 num_train_examples):
+                 use_soft_forgets, softforget_pred_threshold, num_train_examples):
         super().__init__(image_shape, target_shape, device, size_limit)
 
         self.score_order = score_order
@@ -261,6 +261,8 @@ class FixedUnforgettablesMemory(Memory):
         self.check_containing = check_containing
         self.size_limit_per_target = size_limit
         self.size_per_target = {}
+        self.use_soft_forgets = use_soft_forgets
+        self.softforget_pred_threshold = softforget_pred_threshold
         self.num_train_examples = num_train_examples
 
         self.forget_stats = {
@@ -268,6 +270,7 @@ class FixedUnforgettablesMemory(Memory):
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
             "first_learn_iters": np.inf * np.ones(self.num_train_examples, dtype=np.int32),
+            "num_softforgets": np.zeros(self.num_train_examples, dtype=float),
         }
 
         self.global_forget_scores = self.forget_stats["num_forgets"].copy()
@@ -275,12 +278,25 @@ class FixedUnforgettablesMemory(Memory):
 
         self.content.update({"forget_scores": np.inf * np.ones(self.size_limit, dtype=float)})
 
-    def _update_forget_stats(self, idxs, corrects, global_iters):
+    def _update_forget_stats(self, idxs, corrects, softmax_preds, global_iters):
         for i, idx in enumerate(idxs):
             if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
                 self.forget_stats["first_learn_iters"][idx] = global_iters
+
+        softforget_conditions = (self.forget_stats["prev_corrects"][idxs] == 1) & (softmax_preds < self.softforget_pred_threshold)
+        idxs_where_softforgetting = idxs[softforget_conditions]
+        self.num_softforgets_in_iter = len(idxs_where_softforgetting)
+        self.forget_stats["num_softforgets"][idxs_where_softforgetting] += 1
+
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
+        self.num_forgets_in_iter = len(idxs_where_forgetting)
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
+        if self.use_soft_forgets:
+            self.forget_stats["num_forgets"][idxs_where_softforgetting] += 1
+
+        s = set(idxs_where_forgetting)
+        self.num_common_forgetting_and_softforgetting = len([x for x in idxs_where_softforgetting if x in s])
+
         self.forget_stats["prev_corrects"][idxs] = corrects
         self.forget_stats["never_correct"] = np.setdiff1d(
             self.forget_stats["never_correct"],
@@ -348,8 +364,8 @@ class FixedUnforgettablesMemory(Memory):
                     self._update_content_at_idx(update_image, update_target, update_idx_in_ds, replace_idx_in_content, update_forget_score)
         return
 
-    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, global_iters):
-        self._update_forget_stats(indices_in_ds, corrects, global_iters)
+    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, model_output, global_iters):
+        self._update_forget_stats(indices_in_ds, corrects, model_output, global_iters)
         if self.update_content_scores:
             indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))[0]
             content_indices_in_ds = [self.content["indices_in_ds"][i] for i in indices_where_content]
