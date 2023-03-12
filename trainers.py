@@ -2,6 +2,7 @@ from abc import abstractmethod
 import logging
 import os
 
+import copy
 import gin
 import gin.torch
 import matplotlib.pyplot as plt
@@ -11,7 +12,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 import torchvision
 import wandb
 
-import losses, memories
+import losses, memories, mutinfo
 import utils
 
 
@@ -77,6 +78,7 @@ class Trainer:
         self.global_iters = 0
         self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
         self.task_accuracies = {}
+        self.trained_models_at_taskends = {}
         logging.info("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
@@ -143,6 +145,7 @@ class Trainer:
         return
 
     def on_task_end(self):
+        self.trained_models_at_taskends[self.current_task] = copy.deepcopy(self.model)
         utils.save_model(self.model,
                          os.path.join(self.logdir,
                                       "model_checkpoints"
@@ -151,6 +154,7 @@ class Trainer:
         if self.test_on_trainsets is True:
             self.test(self.train_loaders, testing_on_trainsets=True)
         self._log_avg_accuracy_and_forgetting()
+        self._log_trained_models_mutinfos()
 
     def test(self, dataset_loaders, testing_on_trainsets=False):
         with torch.no_grad():
@@ -248,6 +252,9 @@ class Trainer:
                                     f"task_accuracies_after_task={self.current_task}_globaliter={self.global_iters}.txt")
             np.savetxt(save_path, np.array([np.array(v) for v in self.task_accuracies.values()]), delimiter=', ', fmt='%s')
         return
+
+    def _log_trained_models_mutinfos(self):
+        pass
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
