@@ -88,6 +88,7 @@ class SimpleCNN(nn.Module):
             nn.BatchNorm2d(128 * width),
             nn.ReLU()
         )
+        self.feats_dim = 128 * width * 49
 
         self.heads = nn.ModuleList()
         for i in range(len(output_shape)):

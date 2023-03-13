@@ -22,19 +22,20 @@ def entropy(samples):
 
 
 def mutual_information(device, model1, model2, sample_size, dt_loader, index):
-    representation1 = torch.zeros(sample_size, 320).to(device) #itt args.num_dim ki lett cserélve hardcodeolt 320-ra
-    representation2 = torch.zeros(sample_size, 320).to(device) #TODO: ez, de paraméteresen
-    representation_joint = torch.zeros(sample_size, 320 * 2).to(device)
+    assert model1.feats_dim == model2.feats_dim, "The models' feat dims should be identical"
+    output_dim = model1.feats_dim
+
+    representation1 = torch.zeros(sample_size, output_dim).to(device) #itt args.num_dim ki lett cserélve hardcodeolt 320-ra
+    representation2 = torch.zeros(sample_size, output_dim).to(device) #TODO: ez, de paraméteresen
+    representation_joint = torch.zeros(sample_size, output_dim * 2).to(device)
 
     for i, (x_batch, _) in enumerate(dt_loader):
         if i * batch_size >= sample_size:
             break
         x_batch = x_batch.to(device)
         with torch.no_grad():
-            output = model1(x_batch)
-            r1 = output[index]
-            output = model2(x_batch)
-            r2 = output[index]
+            r1 = model1.feature(x_batch)
+            r2 = model2.features(x_batch)
         h = len(r1)
         representation1[i * batch_size: i*batch_size+h] = r1
         representation2[i * batch_size: i*batch_size+h] = r2
@@ -49,7 +50,6 @@ def mutual_information(device, model1, model2, sample_size, dt_loader, index):
     representation1 = representation1.to("cpu")
     representation2 = representation2.to("cpu")
     representation_joint = representation_joint.to("cpu")
-    # detach?
 
     return entropy(representation1)  + entropy(representation2) - entropy(representation_joint)
 

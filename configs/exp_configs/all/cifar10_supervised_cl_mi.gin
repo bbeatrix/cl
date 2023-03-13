@@ -1,0 +1,22 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'cifar10'
+Data.target_type = 'supervised'
+Data.batch_size = 64
+Data.augment = True
+Data.num_tasks = 5
+Data.num_cycles = 1
+
+Model.model_class = @models.simplecnn
+Model.use_classifier_head = True
+
+Trainer.iters = 10000
+Trainer.lr = 0.01
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+Trainer.log_mutinfo = True
+
+torch.optim.SGD.momentum = 0.9
+torch.optim.SGD.nesterov = True

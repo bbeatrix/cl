@@ -40,7 +40,8 @@ def trainer_maker(target_type, *args):
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
-                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False):
+                 lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
+                 log_mutinfo=False):
         self.device = device
         self.model = model
         self.data = data
@@ -53,6 +54,7 @@ class Trainer:
         self.iters = iters
         self.epochs_per_task = epochs_per_task
         self.test_on_trainsets = test_on_trainsets
+        self.log_mutinfo = log_mutinfo
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -154,7 +156,8 @@ class Trainer:
         if self.test_on_trainsets is True:
             self.test(self.train_loaders, testing_on_trainsets=True)
         self._log_avg_accuracy_and_forgetting()
-        self._log_trained_models_mutinfos()
+        if self.log_mutinfo:
+            self._log_trained_models_mutinfos()
 
     def test(self, dataset_loaders, testing_on_trainsets=False):
         with torch.no_grad():
@@ -254,6 +257,17 @@ class Trainer:
         return
 
     def _log_trained_models_mutinfos(self):
+        # for ciklus hogy a self.trained_models_at_taskends eddigi modellekre logoljunk mindent
+        mi = mutinfo.mutual_information(device=self.device,
+                                        model1=self.trained_models_at_taskends[0],
+                                        model2=self.trained_models_at_taskends[0], 
+                                        sample_size=10000, 
+                                        dt_loader=self.test_loaders[0], 
+                                        index=0)
+
+        print("MI of M0 with M0 on T0: ", mi)
+        wandb.log({"MI of M0 with M0 on T0": mi}, step=self.global_iters)
+        exit()
         pass
 
 
