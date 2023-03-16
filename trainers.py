@@ -142,11 +142,12 @@ class Trainer:
             results_to_log = None
 
             self.test(self.test_loaders)
-            if self.test_on_trainsets is True:
-                self.test(self.train_loaders, testing_on_trainsets=True)
+            #if self.test_on_trainsets is True:
+            #    self.test(self.train_loaders, testing_on_trainsets=True)
         return
 
     def on_task_end(self):
+        self.model.eval()
         self.trained_models_at_taskends[self.current_task] = copy.deepcopy(self.model)
         utils.save_model(self.model,
                          os.path.join(self.logdir,
@@ -267,7 +268,7 @@ class Trainer:
                                                     dt_loader=loader, 
                                                     index=0)
 
-                    message_str = "MI of M{} with M{} on T{}".format(idx1, idx2, task_idx)
+                    message_str = "mutinfo/MI of M{} with M{} on T{}".format(idx1, idx2, task_idx)
                     print(message_str + ": ", mi)
                     wandb.log({message_str: mi}, step=self.global_iters)
         return

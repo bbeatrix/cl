@@ -1,4 +1,4 @@
-ExperimentManager.seed = 1
+ExperimentManager.seed = 2
 ExperimentManager.logdir = './outputs'
 
 Data.dataset_name = 'cifar10'

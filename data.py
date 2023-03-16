@@ -344,7 +344,7 @@ class Data:
         for ds in self.test_task_datasets:
             self.test_loaders.append(torch.utils.data.DataLoader(ds,
                                                                  batch_size=self.batch_size,
-                                                                 shuffle=True,
+                                                                 shuffle=False,
                                                                  collate_fn=_collate_func,
                                                                  **self.dataloader_kwargs))
         self.train_loaders = self.train_loaders * self.num_cycles
