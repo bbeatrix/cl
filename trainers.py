@@ -257,19 +257,21 @@ class Trainer:
         return
 
     def _log_trained_models_mutinfos(self):
-        # for ciklus hogy a self.trained_models_at_taskends eddigi modellekre logoljunk mindent
-        mi = mutinfo.mutual_information(device=self.device,
-                                        model1=self.trained_models_at_taskends[0],
-                                        model2=self.trained_models_at_taskends[0], 
-                                        sample_size=10000, 
-                                        dt_loader=self.test_loaders[0], 
-                                        index=0)
+        for idx1 in range(len((self.trained_models_at_taskends))):
+            for idx2 in range(len((self.trained_models_at_taskends))):
+                for task_idx, loader in enumerate(self.train_loaders):
+                    mi = mutinfo.mutual_information(device=self.device,
+                                                    model1=self.trained_models_at_taskends[idx1],
+                                                    model2=self.trained_models_at_taskends[idx2], 
+                                                    sample_size=10000, 
+                                                    dt_loader=loader, 
+                                                    index=0)
 
-        print("MI of M0 with M0 on T0: ", mi)
-        wandb.log({"MI of M0 with M0 on T0": mi}, step=self.global_iters)
-        exit()
-        pass
-
+                    message_str = "MI of M{} with M{} on T{}".format(idx1, idx2, task_idx)
+                    print(message_str + ": ", mi)
+                    wandb.log({message_str: mi}, step=self.global_iters)
+        return
+        
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):

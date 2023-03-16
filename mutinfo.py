@@ -34,7 +34,7 @@ def mutual_information(device, model1, model2, sample_size, dt_loader, index):
             break
         x_batch = x_batch.to(device)
         with torch.no_grad():
-            r1 = model1.feature(x_batch)
+            r1 = model1.features(x_batch)
             r2 = model2.features(x_batch)
         h = len(r1)
         representation1[i * batch_size: i*batch_size+h] = r1
