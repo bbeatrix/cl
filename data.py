@@ -188,12 +188,23 @@ class Data:
             self.train_dataset = torch.utils.data.ConcatDataset([self.train_dataset, self.test_dataset])
             logging.info(f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}")
 
-        self.control_group = {}
+        self.control_group = {"unforgettables": {}, "low_forgettables": {}, "high_forgettables": {}}
         train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
-        for l in range(self.num_classes):
-            index_in_ds = np.where(train_targets == l)[0][0]
-            self.control_group[l] = self.train_dataset[index_in_ds]
+        precomputed_fscores_with_labels = np.load(f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy")
 
+        for c in range(self.num_classes):
+            class_indices = np.where(precomputed_fscores_with_labels[1] == c)[0]
+            class_scores = precomputed_fscores_with_labels[0][class_indices]
+            unforgettables_indices = np.where(class_scores == 0)[0][:3]
+            forgettables_indices = np.where(class_scores > 0)[0]
+            sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
+            low_forgettables_indices = sorted_forgettables_indices[:3]
+            high_forgettables_indices = sorted_forgettables_indices[-3:]
+            
+            self.control_group["unforgettables"][c] = [self.train_dataset[i] for i in class_indices[unforgettables_indices]]
+            self.control_group["low_forgettables"][c] = [self.train_dataset[i] for i in class_indices[low_forgettables_indices]]
+            self.control_group["high_forgettables"][c] = [self.train_dataset[i] for i in class_indices[high_forgettables_indices]]
+        print(len(self.control_group["unforgettables"].values()))
 
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
