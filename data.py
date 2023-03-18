@@ -189,7 +189,6 @@ class Data:
             logging.info(f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}")
 
         self.control_group = {"unforgettables": {}, "low_forgettables": {}, "high_forgettables": {}}
-        train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
         precomputed_fscores_with_labels = np.load(f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy")
 
         for c in range(self.num_classes):
@@ -204,7 +203,6 @@ class Data:
             self.control_group["unforgettables"][c] = [self.train_dataset[i] for i in class_indices[unforgettables_indices]]
             self.control_group["low_forgettables"][c] = [self.train_dataset[i] for i in class_indices[low_forgettables_indices]]
             self.control_group["high_forgettables"][c] = [self.train_dataset[i] for i in class_indices[high_forgettables_indices]]
-        print(len(self.control_group["unforgettables"].values()))
 
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")

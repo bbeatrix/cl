@@ -254,30 +254,34 @@ class Trainer:
 
     def _log_controlgroup_predictions(self):
         logging.info("Logging info on control group images' predictions")
+        controlgroup_images = torch.stack([item[0] for cgdict in self.data.control_group.values() for cgitemlist in cgdict.values() for item in cgitemlist]) # 3 x 3x10 the first dim? 
+        
+        controlgroup_images = controlgroup_images.to(self.device)
+        controlgroup_model_outputs = self.model(controlgroup_images)
+        pred_dim = controlgroup_model_outputs.shape[-1]
+
+        log_dict = {}
         for gkey, control_group_dict in self.data.control_group.items(): # iterate over forgetscorebased groups
             for idx, cgitemlist in enumerate(control_group_dict.values()): # iterate over imagelist per class  0: [1.data , 2.data, 3.data]
-                controlgroup_images = torch.stack([item[0] for item in cgitemlist])
-
-                controlgroup_images = controlgroup_images.to(self.device)
-                controlgroup_model_outputs = self.model(controlgroup_images)
-                pred_dim = controlgroup_model_outputs.shape[-1]
-                
-                for itemidx, cgitem in enumerate(cgitemlist): 
-                    wandb.log({f"cg pred/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction {c}": controlgroup_model_outputs[itemidx][c] for c in range(pred_dim)}, step=self.global_iters)
+                for itemidx, cgitem in enumerate(cgitemlist): # iterate over image list 
                     right_pred = controlgroup_model_outputs[itemidx][cgitem[1]]
                     max_pred = max(controlgroup_model_outputs[itemidx])
-                    wandb.log({f"cg pred diff/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction diff from max": right_pred - max_pred}, self.global_iters)
-                    softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[itemidx], dim=-1)
-                    wandb.log({f"cg pred softmax/{gkey}/cg target {cgitem[1]} {itemidx}. image softmax prediction {c}": softmax_pred[c] for c in range(pred_dim)}, self.global_iters)
-                images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
-                fig = plt.figure(figsize = (20, 40))
-                image_grid = torchvision.utils.make_grid(images)
-                ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
-                plt.axis('off')
-                fig = plt.gcf()
-                wandb.log({"control group images": fig}, step=self.global_iters)
-                plt.close()
-        print("Everything about controlgroup is logged ")
+                    log_dict[f"cg pred diff/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction diff from max"] = right_pred - max_pred
+                    for c in range(pred_dim):
+                        log_dict[f"cg pred/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction {c}"] = controlgroup_model_outputs[itemidx][c]
+                        softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[itemidx], dim=-1)
+                        log_dict[f"cg pred softmax/{gkey}/cg target {cgitem[1]} {itemidx}. image softmax prediction {c}"]= softmax_pred[c]
+
+        wandb.log({k: v for k,v in log_dict.items()}, step=self.global_iters)
+        images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
+        fig = plt.figure(figsize = (20, 40))
+        image_grid = torchvision.utils.make_grid(images)
+        ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
+        plt.axis('off')
+        fig = plt.gcf()
+        wandb.log({"control group images": fig}, step=self.global_iters)
+        plt.close()
+        logging.info("Finished logging info on control group images")
         return
 
 
