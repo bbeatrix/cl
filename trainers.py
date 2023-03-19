@@ -261,16 +261,18 @@ class Trainer:
         pred_dim = controlgroup_model_outputs.shape[-1]
 
         log_dict = {}
-        for gkey, control_group_dict in self.data.control_group.items(): # iterate over forgetscorebased groups
-            for idx, cgitemlist in enumerate(control_group_dict.values()): # iterate over imagelist per class  0: [1.data , 2.data, 3.data]
-                for itemidx, cgitem in enumerate(cgitemlist): # iterate over image list 
-                    right_pred = controlgroup_model_outputs[itemidx][cgitem[1]]
-                    max_pred = max(controlgroup_model_outputs[itemidx])
-                    log_dict[f"cg pred diff/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction diff from max"] = right_pred - max_pred
+        imgidx = 0
+        for gkey, control_group_dict in self.data.control_group.items():
+            for lidx, cgitemlist in enumerate(control_group_dict.values()):
+                for itemidx in range(len(cgitemlist)):
+                    right_pred = controlgroup_model_outputs[imgidx][lidx]
+                    max_pred = max(controlgroup_model_outputs[imgidx])
+                    log_dict[f"cg pred diff/{gkey}/cg target {lidx} {itemidx}. image prediction diff from max"] = right_pred - max_pred
                     for c in range(pred_dim):
-                        log_dict[f"cg pred/{gkey}/cg target {cgitem[1]} {itemidx}. image prediction {c}"] = controlgroup_model_outputs[itemidx][c]
-                        softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[itemidx], dim=-1)
-                        log_dict[f"cg pred softmax/{gkey}/cg target {cgitem[1]} {itemidx}. image softmax prediction {c}"]= softmax_pred[c]
+                        log_dict[f"cg pred/{gkey}/cg target {lidx} {itemidx}. image prediction {c}"] = controlgroup_model_outputs[imgidx][c]
+                        softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[imgidx], dim=-1)
+                        log_dict[f"cg pred softmax/{gkey}/cg target {lidx} {itemidx}. image softmax prediction {c}"]= softmax_pred[c]
+                    imgidx += 1
 
         wandb.log({k: v for k,v in log_dict.items()}, step=self.global_iters)
         images = self.data.inverse_normalize(controlgroup_images.detach().cpu())
@@ -281,7 +283,6 @@ class Trainer:
         fig = plt.gcf()
         wandb.log({"control group images": fig}, step=self.global_iters)
         plt.close()
-        logging.info("Finished logging info on control group images")
         return
 
 
