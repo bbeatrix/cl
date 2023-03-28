@@ -1,0 +1,26 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'cifar10'
+Data.target_type = 'supervised with forgetstats'
+Data.image_size = 32
+Data.batch_size = 128
+Data.augment = True
+Data.simple_augmentation = True
+Data.normalization = True
+Data.num_tasks = 5
+Data.num_cycles = 2
+
+Model.model_class = @models.simplecnn
+Model.use_classifier_head = True
+
+Trainer.iters = 15800
+Trainer.epochs_per_task = 20
+Trainer.lr = 0.1
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+Trainer.test_on_controlgroup = True
+
+torch.optim.SGD.momentum = 0.9
+torch.optim.SGD.nesterov = True
