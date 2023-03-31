@@ -257,7 +257,7 @@ class Trainer:
         controlgroup_images = torch.stack([item[0] for cgdict in self.data.control_group.values() for cgitemlist in cgdict.values() for item in cgitemlist]) # 3 x 3x10 the first dim? 
         
         controlgroup_images = controlgroup_images.to(self.device)
-        controlgroup_model_outputs = self.model(controlgroup_images)
+        controlgroup_model_outputs = self.model(controlgroup_images).detach().cpu()
         pred_dim = controlgroup_model_outputs.shape[-1]
 
         log_dict = {}
@@ -267,10 +267,14 @@ class Trainer:
                 for itemidx in range(len(cgitemlist)):
                     right_pred = controlgroup_model_outputs[imgidx][lidx]
                     max_pred = max(controlgroup_model_outputs[imgidx])
+                    softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[imgidx], dim=-1)
+                    onehot_pred = torch.nn.functional.one_hot(torch.tensor(lidx), num_classes=pred_dim)
+                    el2n = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
+                    log_dict[f"cg el2n/{gkey}/cg target {lidx} {itemidx}. image el2n_score"] = el2n.numpy()
+
                     log_dict[f"cg pred diff/{gkey}/cg target {lidx} {itemidx}. image prediction diff from max"] = right_pred - max_pred
                     for c in range(pred_dim):
                         log_dict[f"cg pred/{gkey}/cg target {lidx} {itemidx}. image prediction {c}"] = controlgroup_model_outputs[imgidx][c]
-                        softmax_pred = torch.nn.functional.softmax(controlgroup_model_outputs[imgidx], dim=-1)
                         log_dict[f"cg pred softmax/{gkey}/cg target {lidx} {itemidx}. image softmax prediction {c}"]= softmax_pred[c]
                     imgidx += 1
 
