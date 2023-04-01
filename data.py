@@ -203,6 +203,22 @@ class Data:
             self.control_group["unforgettables"][c] = [self.train_dataset[i] for i in class_indices[unforgettables_indices]]
             self.control_group["low_forgettables"][c] = [self.train_dataset[i] for i in class_indices[low_forgettables_indices]]
             self.control_group["high_forgettables"][c] = [self.train_dataset[i] for i in class_indices[high_forgettables_indices]]
+        
+        self.images_per_targets = {}
+        train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
+        print(self.train_dataset[0])
+        print(len(train_targets))
+        for c in range(0, self.num_classes):
+            trainset_filtered_indices = np.where(train_targets == c)[0]
+            print(trainset_filtered_indices.shape)
+            class_images = [self.train_dataset[i] for i in trainset_filtered_indices]
+            print(len(class_images))
+            self.images_per_targets[c] = torch.stack([class_images[i][0] for i in range(len(class_images))])
+        self.full_trainset_loader = torch.utils.data.DataLoader(self.train_dataset,
+                                                           batch_size=self.batch_size,
+                                                           shuffle=False,
+                                                           collate_fn=default_collate,
+                                                           **self.dataloader_kwargs)
 
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
