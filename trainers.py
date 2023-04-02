@@ -159,11 +159,18 @@ class Trainer:
         logging.info("Logging dist_from_mean_feats")
         if not os.path.isdir(os.path.join(self.logdir, "dist_from_mean_feats")):
             os.makedirs(os.path.join(self.logdir, "dist_from_mean_feats"))
+
+        self.mean_feats, self.normalized_mean_feats = self._get_mean_features()
         dist_from_mean_feats, normalized_dist_from_mean_feeats = self._get_dist_from_mean_feats(self.mean_feats,
                                                                                                 self.normalized_mean_feats,
                                                                                                 self.data.full_trainset_loader)
         np.savetxt(os.path.join(self.logdir, "dist_from_mean_feats", f"dist_from_mean_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), dist_from_mean_feats)
         np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"normalized_dist_from_mean_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), normalized_dist_from_mean_feeats)
+        logging.info("Logging el2n scores")
+        if not os.path.isdir(os.path.join(self.logdir, "el2n_scores_attaskend")):
+            os.makedirs(os.path.join(self.logdir, "el2n_scores_attaskend"))
+        el2n_scores = self._get_el2n_scores(self.data.full_trainset_loader)
+        np.savetxt(os.path.join(self.logdir, "el2n_scores_attaskend", f"el2n_scores_task={self.current_task}_globaliter={self.global_iters}.npy"), el2n_scores)
         logging.info("Task {} ended.".format(self.current_task + 1))
 
     def test(self, dataset_loaders, testing_on_trainsets=False):
@@ -328,6 +335,17 @@ class Trainer:
                 dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] - mean_feats[target.item()])
                 normalized_dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] / torch.norm(batch_model_outputs[idx]) - normalized_mean_feats[target.item()])
         return dist_from_mean_feats, normalized_dist_from_mean_feats
+
+    def _get_el2n_scores(self, dataloader):
+        el2nscores = torch.zeros(len(self.data.train_dataset))
+        for batch in iter(dataloader):
+            images, targets, indices = batch
+            images = images.to(self.device)
+            batch_model_outputs = self.model(images).detach().cpu()
+            softmax_pred = torch.nn.functional.softmax(batch_model_outputs, dim=-1)
+            onehot_pred = torch.nn.functional.one_hot(targets, num_classes=softmax_pred.shape[-1])
+            el2nscores[indices] = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
+        return el2nscores
         
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
@@ -376,13 +394,16 @@ class SupTrainerWForgetStats(SupTrainer):
         }
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
+        self.el2n_scores = np.inf * np.ones(self.num_train_examples, dtype=float)
         self.log_score_freq = log_score_freq
         if not os.path.isdir(os.path.join(self.logdir, "forget_scores")):
             os.makedirs(os.path.join(self.logdir, "forget_scores"))
         if not os.path.isdir(os.path.join(self.logdir, "first_learn_iters")):
             os.makedirs(os.path.join(self.logdir, "first_learn_iters"))
+        if not os.path.isdir(os.path.join(self.logdir, "el2n_scores")):
+            os.makedirs(os.path.join(self.logdir, "el2n_scores"))
 
-    def update_forget_stats(self, idxs, corrects):
+    def update_forget_stats(self, idxs, corrects, el2ns):
         count_first_learns = 0
         for i, idx in enumerate(idxs):
             if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
@@ -399,6 +420,7 @@ class SupTrainerWForgetStats(SupTrainer):
         )
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
+        self.el2n_scores[idxs] = el2ns
         return
 
     def save_first_learn_iters(self):
@@ -413,6 +435,12 @@ class SupTrainerWForgetStats(SupTrainer):
                                  f"fs_task={self.current_task}_globaliter={self.global_iters}.npy")
         np.save(save_path, self.forget_scores)
 
+    def save_el2n_scores(self):
+        save_path = os.path.join(self.logdir,
+                                 "el2n_scores",
+                                 f"el2ns_task={self.current_task}_globaliter={self.global_iters}.npy")
+        np.save(save_path, self.el2n_scores)
+
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
@@ -423,20 +451,27 @@ class SupTrainerWForgetStats(SupTrainer):
         predictions = torch.argmax(model_output, dim=1)
         corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
         accuracy_mean = torch.mean(torch.eq(predictions, target).float())
+        softmax_preds = torch.softmax(model_output, dim=1).detach().cpu()
+        onehot_targets = torch.nn.functional.one_hot(target, num_classes=softmax_preds.shape[-1]).detach().cpu()
+        el2ns = torch.norm(softmax_preds - onehot_targets, p=2, dim=-1).numpy()
 
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy_mean,
-                   'corrects': corrects}
+                   'corrects': corrects,
+                   'el2ns': el2ns}
         return results
 
     def on_iter_end(self, batch, batch_results):
         super(SupTrainerWForgetStats, self).on_iter_end(batch, batch_results)
         indices_in_ds = batch[2]
         corrects = batch_results["corrects"]
-        self.update_forget_stats(indices_in_ds, corrects)
+        el2ns = batch_results["el2ns"]
+        self.update_forget_stats(indices_in_ds, corrects, el2ns)
         if self.global_iters % self.log_score_freq == 0:
             self.save_forget_scores()
+            self.save_el2n_scores()
             self._log_forget_scores_hist(self.forget_scores)
+            self._log_el2n_scores_hist(self.el2n_scores)
             
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
                        "count corrects": sum(corrects),
@@ -450,6 +485,7 @@ class SupTrainerWForgetStats(SupTrainer):
         super(SupTrainerWForgetStats, self).on_task_end()
         self.save_forget_scores()
         self.save_first_learn_iters()
+        self.save_el2n_scores()
         return
 
     def _log_forget_scores_hist(self, fs, bins=20):
@@ -461,6 +497,18 @@ class SupTrainerWForgetStats(SupTrainer):
         plt.xlabel("Number of forgetting events occurred")
         plt.ylabel("Number of training samples")
         wandb.log({"forget scores histogram": wandb.Image(fig)}, step=self.global_iters)
+        plt.close()
+        return
+
+    def _log_el2n_scores_hist(self, el2ns, bins=20):
+        if sum(np.isinf(el2ns)) > 0:
+            el2ns[el2ns == np.inf] = -1
+        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+        axs.hist(el2ns, bins=bins)
+        plt.title(f"EL2N scores at {self.global_iters} steps, task {self.current_task}")
+        plt.xlabel("L2 norm of the error vector")
+        plt.ylabel("Number of training samples")
+        wandb.log({"el2n scores histogram": wandb.Image(fig)}, step=self.global_iters)
         plt.close()
         return
 
