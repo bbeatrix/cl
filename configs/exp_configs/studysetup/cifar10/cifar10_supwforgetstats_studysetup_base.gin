@@ -20,7 +20,6 @@ Trainer.lr = 0.1
 Trainer.wd = 0.0
 Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100
-Trainer.test_on_controlgroup = True
 
 torch.optim.SGD.momentum = 0.9
 torch.optim.SGD.nesterov = True
