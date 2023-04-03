@@ -160,12 +160,14 @@ class Trainer:
         if not os.path.isdir(os.path.join(self.logdir, "dist_from_mean_feats")):
             os.makedirs(os.path.join(self.logdir, "dist_from_mean_feats"))
 
-        self.mean_feats, self.normalized_mean_feats = self._get_mean_features()
+        self.penultim_feats = True
+        self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
         dist_from_mean_feats, normalized_dist_from_mean_feeats = self._get_dist_from_mean_feats(self.mean_feats,
                                                                                                 self.normalized_mean_feats,
-                                                                                                self.data.full_trainset_loader)
-        np.savetxt(os.path.join(self.logdir, "dist_from_mean_feats", f"dist_from_mean_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), dist_from_mean_feats)
-        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"normalized_dist_from_mean_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), normalized_dist_from_mean_feeats)
+                                                                                                self.data.full_trainset_loader,
+                                                                                                self.penultim_feats)
+        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), dist_from_mean_feats)
+        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"normalized_dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), normalized_dist_from_mean_feeats)
         logging.info("Logging el2n scores")
         if not os.path.isdir(os.path.join(self.logdir, "el2n_scores_attaskend")):
             os.makedirs(os.path.join(self.logdir, "el2n_scores_attaskend"))
@@ -275,8 +277,13 @@ class Trainer:
         
         controlgroup_images = controlgroup_images.to(self.device)
         controlgroup_model_outputs = self.model(controlgroup_images).detach().cpu()
+        self.penultim_feats = True
+        if self.penultim_feats:
+            controlgroup_model_features = self.model.features(controlgroup_images).detach().cpu()
+        else:
+            controlgroup_model_features = controlgroup_model_outputs
         pred_dim = controlgroup_model_outputs.shape[-1]
-        self.mean_feats, self.normalized_mean_feats = self._get_mean_features()
+        self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
 
         log_dict = {}
         imgidx = 0
@@ -290,11 +297,11 @@ class Trainer:
                     el2n = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
                     log_dict[f"cg el2n/{gkey}/cg target {lidx} {itemidx}. image el2n_score"] = el2n.numpy()
 
-                    dist_from_mean_feat = torch.norm(self.mean_feats[lidx] - controlgroup_model_outputs[imgidx], p=2, dim=-1)
-                    normalized_output = controlgroup_model_outputs[imgidx] / torch.norm(controlgroup_model_outputs[imgidx], p=2, dim=-1)
-                    dist_from_normalized_mean_feat = torch.norm(self.normalized_mean_feats[lidx] - normalized_output, p=2, dim=-1)
-                    log_dict[f"cg dist from mean feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_mean_feat"] = dist_from_mean_feat.numpy()
-                    log_dict[f"cg dist from normalized mean feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_normalized_mean_feat"] = dist_from_normalized_mean_feat.numpy()
+                    dist_from_mean_feat = torch.norm(self.mean_feats[lidx] - controlgroup_model_features[imgidx], p=2, dim=-1)
+                    normalized_feats = controlgroup_model_features[imgidx] / torch.norm(controlgroup_model_features[imgidx], p=2, dim=-1)
+                    dist_from_normalized_mean_feat = torch.norm(self.normalized_mean_feats[lidx] - normalized_feats, p=2, dim=-1)
+                    log_dict[f"cg dist from mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_mean_feat"] = dist_from_mean_feat.numpy()
+                    log_dict[f"cg dist from normalized mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_normalized_mean_feat"] = dist_from_normalized_mean_feat.numpy()
 
                     log_dict[f"cg pred diff/{gkey}/cg target {lidx} {itemidx}. image prediction diff from max"] = right_pred - max_pred
                     for c in range(pred_dim):
@@ -313,24 +320,31 @@ class Trainer:
         plt.close()
         return
 
-    def _get_mean_features(self):
+    def _get_mean_features(self, penultim_feats=False):
         mean_feats, normalized_mean_feats = {}, {}
         normalized_mean_feats = {}
         for target, images in self.data.images_per_targets.items():
             images = images.to(self.device)
-            targetimages_model_outputs = self.model(images).detach().cpu()
+            if penultim_feats:
+                targetimages_model_outputs = self.model.features(images).detach().cpu()
+            else:
+                targetimages_model_outputs = self.model(images).detach().cpu()
+
             normalized_targetimages_model_outputs = targetimages_model_outputs / torch.norm(targetimages_model_outputs, p=2, dim=1, keepdim=True)
             mean_feats[target] = torch.mean(targetimages_model_outputs, dim=0)
             normalized_mean_feats[target] = torch.mean(normalized_targetimages_model_outputs, dim=0)
             normalized_mean_feats[target] /= torch.norm(normalized_mean_feats[target])
         return mean_feats, normalized_mean_feats
     
-    def _get_dist_from_mean_feats(self, mean_feats, normalized_mean_feats, dataloader):
+    def _get_dist_from_mean_feats(self, mean_feats, normalized_mean_feats, dataloader, penultim_feats=False):
         dist_from_mean_feats, normalized_dist_from_mean_feats = torch.zeros(len(self.data.train_dataset)), torch.zeros(len(self.data.train_dataset))
         for batch in iter(dataloader):
             images, targets, indices = batch
             images = images.to(self.device)
-            batch_model_outputs = self.model(images).detach().cpu()
+            if penultim_feats:
+                batch_model_outputs = self.model.features(images).detach().cpu()
+            else:
+                batch_model_outputs = self.model(images).detach().cpu()
             for idx, target in enumerate(targets):
                 dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] - mean_feats[target.item()])
                 normalized_dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] / torch.norm(batch_model_outputs[idx]) - normalized_mean_feats[target.item()])
