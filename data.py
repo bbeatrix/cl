@@ -206,13 +206,9 @@ class Data:
         
         self.images_per_targets = {}
         train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
-        print(self.train_dataset[0])
-        print(len(train_targets))
         for c in range(0, self.num_classes):
             trainset_filtered_indices = np.where(train_targets == c)[0]
-            print(trainset_filtered_indices.shape)
             class_images = [self.train_dataset[i] for i in trainset_filtered_indices]
-            print(len(class_images))
             self.images_per_targets[c] = torch.stack([class_images[i][0] for i in range(len(class_images))])
         self.full_trainset_loader = torch.utils.data.DataLoader(self.train_dataset,
                                                            batch_size=self.batch_size,
