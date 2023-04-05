@@ -40,7 +40,7 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
-                 test_on_controlgroup=False):
+                 test_on_controlgroup=False, log_meanfeatdists=False):
         self.device = device
         self.model = model
         self.data = data
@@ -54,6 +54,7 @@ class Trainer:
         self.epochs_per_task = epochs_per_task
         self.test_on_trainsets = test_on_trainsets
         self.test_on_controlgroup = test_on_controlgroup
+        self.log_meanfeatdists = log_meanfeatdists
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -156,18 +157,9 @@ class Trainer:
             self.test(self.train_loaders, testing_on_trainsets=True)
         self._log_avg_accuracy_and_forgetting()
         
-        logging.info("Logging dist_from_mean_feats")
-        if not os.path.isdir(os.path.join(self.logdir, "dist_from_mean_feats")):
-            os.makedirs(os.path.join(self.logdir, "dist_from_mean_feats"))
+        if self.log_meanfeatdists:
+            self._log_meanfeatdists()
 
-        self.penultim_feats = True
-        self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
-        dist_from_mean_feats, normalized_dist_from_mean_feeats = self._get_dist_from_mean_feats(self.mean_feats,
-                                                                                                self.normalized_mean_feats,
-                                                                                                self.data.full_trainset_loader,
-                                                                                                self.penultim_feats)
-        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), dist_from_mean_feats)
-        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"normalized_dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), normalized_dist_from_mean_feeats)
         logging.info("Logging el2n scores")
         if not os.path.isdir(os.path.join(self.logdir, "el2n_scores_attaskend")):
             os.makedirs(os.path.join(self.logdir, "el2n_scores_attaskend"))
@@ -283,7 +275,8 @@ class Trainer:
         else:
             controlgroup_model_features = controlgroup_model_outputs
         pred_dim = controlgroup_model_outputs.shape[-1]
-        self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
+        if self.log_meanfeatdists:
+            self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
 
         log_dict = {}
         imgidx = 0
@@ -297,11 +290,12 @@ class Trainer:
                     el2n = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
                     log_dict[f"cg el2n/{gkey}/cg target {lidx} {itemidx}. image el2n_score"] = el2n.numpy()
 
-                    dist_from_mean_feat = torch.norm(self.mean_feats[lidx] - controlgroup_model_features[imgidx], p=2, dim=-1)
-                    normalized_feats = controlgroup_model_features[imgidx] / torch.norm(controlgroup_model_features[imgidx], p=2, dim=-1)
-                    dist_from_normalized_mean_feat = torch.norm(self.normalized_mean_feats[lidx] - normalized_feats, p=2, dim=-1)
-                    log_dict[f"cg dist from mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_mean_feat"] = dist_from_mean_feat.numpy()
-                    log_dict[f"cg dist from normalized mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_normalized_mean_feat"] = dist_from_normalized_mean_feat.numpy()
+                    if self.log_meanfeatdists:
+                        dist_from_mean_feat = torch.norm(self.mean_feats[lidx] - controlgroup_model_features[imgidx], p=2, dim=-1)
+                        normalized_feats = controlgroup_model_features[imgidx] / torch.norm(controlgroup_model_features[imgidx], p=2, dim=-1)
+                        dist_from_normalized_mean_feat = torch.norm(self.normalized_mean_feats[lidx] - normalized_feats, p=2, dim=-1)
+                        log_dict[f"cg dist from mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_mean_feat"] = dist_from_mean_feat.numpy()
+                        log_dict[f"cg dist from normalized mean penultim feat/{gkey}/cg target {lidx} {itemidx}. image dist_from_normalized_mean_feat"] = dist_from_normalized_mean_feat.numpy()
 
                     log_dict[f"cg pred diff/{gkey}/cg target {lidx} {itemidx}. image prediction diff from max"] = right_pred - max_pred
                     for c in range(pred_dim):
@@ -318,6 +312,21 @@ class Trainer:
         fig = plt.gcf()
         wandb.log({"control group images": fig}, step=self.global_iters)
         plt.close()
+        return
+
+    def _log_meanfeatdists(self):
+        logging.info("Logging dist_from_mean_feats")
+        if not os.path.isdir(os.path.join(self.logdir, "dist_from_mean_feats")):
+            os.makedirs(os.path.join(self.logdir, "dist_from_mean_feats"))
+
+        self.penultim_feats = True
+        self.mean_feats, self.normalized_mean_feats = self._get_mean_features(self.penultim_feats)
+        dist_from_mean_feats, normalized_dist_from_mean_feeats = self._get_dist_from_mean_feats(self.mean_feats,
+                                                                                                self.normalized_mean_feats,
+                                                                                                self.data.full_trainset_loader,
+                                                                                                self.penultim_feats)
+        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), dist_from_mean_feats)
+        np.save(os.path.join(self.logdir, "dist_from_mean_feats", f"normalized_dist_from_mean_penultim_feats_task={self.current_task}_globaliter={self.global_iters}.npy"), normalized_dist_from_mean_feeats)
         return
 
     def _get_mean_features(self, penultim_feats=False):
