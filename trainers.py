@@ -160,13 +160,6 @@ class Trainer:
         if self.log_meanfeatdists:
             self._log_meanfeatdists()
 
-        logging.info("Logging el2n scores")
-        if not os.path.isdir(os.path.join(self.logdir, "el2n_scores_attaskend")):
-            os.makedirs(os.path.join(self.logdir, "el2n_scores_attaskend"))
-        el2n_scores = self._get_el2n_scores(self.data.full_trainset_loader)
-        np.savetxt(os.path.join(self.logdir, "el2n_scores_attaskend", f"el2n_scores_task={self.current_task}_globaliter={self.global_iters}.npy"), el2n_scores)
-        logging.info("Task {} ended.".format(self.current_task + 1))
-
     def test(self, dataset_loaders, testing_on_trainsets=False):
         with torch.no_grad():
             self.model.eval()
@@ -358,17 +351,6 @@ class Trainer:
                 dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] - mean_feats[target.item()])
                 normalized_dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] / torch.norm(batch_model_outputs[idx]) - normalized_mean_feats[target.item()])
         return dist_from_mean_feats, normalized_dist_from_mean_feats
-
-    def _get_el2n_scores(self, dataloader):
-        el2nscores = torch.zeros(len(self.data.train_dataset))
-        for batch in iter(dataloader):
-            images, targets, indices = batch
-            images = images.to(self.device)
-            batch_model_outputs = self.model(images).detach().cpu()
-            softmax_pred = torch.nn.functional.softmax(batch_model_outputs, dim=-1)
-            onehot_pred = torch.nn.functional.one_hot(targets, num_classes=softmax_pred.shape[-1])
-            el2nscores[indices] = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
-        return el2nscores
         
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
