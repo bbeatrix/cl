@@ -106,6 +106,8 @@ class Trainer:
 
                 batch_results = self.train_on_batch(batch)
                 self.on_iter_end(batch, batch_results)
+                if self.iter_count % len(current_train_loader) == 0:
+                    self.on_epoch_end()
             self.on_task_end()
         return
 
@@ -147,7 +149,11 @@ class Trainer:
                 self.test(self.train_loaders, testing_on_trainsets=True)
         return
 
+    def on_epoch_end(self):
+        logging.info(f"Epoch {self.iter_count // len(self.train_loaders[self.current_task])} ended.")
+
     def on_task_end(self):
+        logging.info(f"Task {self.current_task + 1} ended.")
         utils.save_model(self.model,
                          os.path.join(self.logdir,
                                       "model_checkpoints",
@@ -282,6 +288,13 @@ class Trainer:
                     onehot_pred = torch.nn.functional.one_hot(torch.tensor(lidx), num_classes=pred_dim)
                     el2n = torch.norm(softmax_pred - onehot_pred, p=2, dim=-1)
                     log_dict[f"cg el2n/{gkey}/cg target {lidx} {itemidx}. image el2n_score"] = el2n.numpy()
+                    try:
+                        self.sum_el2ns[imgidx] += el2n
+                    except AttributeError:
+                        self.sum_el2ns = torch.zeros(len(controlgroup_images))
+                        self.sum_el2ns[imgidx] += el2n
+                    log_dict[f"cg el2n sum/{gkey}/cg target {lidx} {itemidx}. image el2n_sum_score"] = self.sum_el2ns[imgidx].numpy()
+                    log_dict[f"cg el2n avg/{gkey}/cg target {lidx} {itemidx}. image el2n_avg_score"] = self.sum_el2ns[imgidx].numpy()/self.global_iters
 
                     if self.log_meanfeatdists:
                         dist_from_mean_feat = torch.norm(self.mean_feats[lidx] - controlgroup_model_features[imgidx], p=2, dim=-1)
