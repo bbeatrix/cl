@@ -403,61 +403,72 @@ class SupTrainer(Trainer):
 class SupTrainerWForgetStats(SupTrainer):
     def __init__(self, device, model, data, logdir, log_score_freq=100):
         super().__init__(device, model, data, logdir)
+        self.softforget_pred_threshold = 0.9
+        self.log_score_freq = log_score_freq
         self.num_train_examples = len(data.train_dataset)
         self.forget_stats = {
             "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
+            "num_softforgets": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
-            "first_learn_iters": np.inf * np.ones(self.num_train_examples, dtype=np.int32),
         }
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
-        self.el2n_scores = np.inf * np.ones(self.num_train_examples, dtype=float)
-        self.log_score_freq = log_score_freq
-        if not os.path.isdir(os.path.join(self.logdir, "forget_scores")):
-            os.makedirs(os.path.join(self.logdir, "forget_scores"))
-        if not os.path.isdir(os.path.join(self.logdir, "first_learn_iters")):
-            os.makedirs(os.path.join(self.logdir, "first_learn_iters"))
-        if not os.path.isdir(os.path.join(self.logdir, "el2n_scores")):
-            os.makedirs(os.path.join(self.logdir, "el2n_scores"))
+        self.softforget_scores = self.forget_stats["num_softforgets"].copy()
+        self.softforget_scores[self.forget_stats["never_correct"]] = np.inf
 
-    def update_forget_stats(self, idxs, corrects, el2ns):
-        count_first_learns = 0
-        for i, idx in enumerate(idxs):
-            if self.forget_stats["first_learn_iters"][idx] == np.inf and corrects[i] == 1:
-                self.forget_stats["first_learn_iters"][idx] = self.global_iters
-                count_first_learns += 1
-        wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
+        self.all_scores = {}
+        self.all_scores_descriptions = {"forget": "Number of forgetting events occurred", "softforget": "Number of soft forgetting events occurred",
+                                       "el2n": "Sum of l2 norm of error vectors", "negentropy": "Sum of negative entropies of softmax outputs",
+                                       "accuracy": "Sum of prediction accuracies",
+                                       "pcorrect": "Sum of correct prediction probabilities", "pmax": "Sum of maximum prediction probabilities",
+                                       "firstlearniter": "Iteration of first learning event", "finallearniter": "Iteration of final learning event"}
+        if not os.path.isdir(os.path.join(self.logdir, "all_scores")):
+            os.makedirs(os.path.join(self.logdir, "all_scores"))
+        for score_type in self.all_scores_descriptions.keys():
+            if score_type in ["el2n", "negentropy", "accuracy", "pmax", "pcorrect"]:
+                self.all_scores[score_type] = np.zeros(self.num_train_examples, dtype=float)
+            else:
+                self.all_scores[score_type] = np.inf * np.ones(self.num_train_examples, dtype=float)
+            if not os.path.isdir(os.path.join(self.logdir, "all_scores", f"{score_type}_scores")):
+                os.makedirs(os.path.join(self.logdir, "all_scores", f"{score_type}_scores"))
+
+    def update_forget_stats_and_scores(self, idxs, corrects, softmax_preds, pred_scores):
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
+        softforget_conditions = (self.forget_stats["prev_corrects"][idxs] == 1) & (softmax_preds < self.softforget_pred_threshold)
+        idxs_where_softforgetting = idxs[softforget_conditions]
+
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
-        self.forget_stats["prev_corrects"][idxs] = corrects
+        self.forget_stats["num_softforgets"][idxs_where_softforgetting] += 1
+        prev_corrects_in_batch = self.forget_stats["prev_corrects"][idxs]
+        self.forget_stats["prev_corrects"][idxs] = corrects 
         self.forget_stats["never_correct"] = np.setdiff1d(
             self.forget_stats["never_correct"],
             idxs[corrects.astype(bool)],
             True
         )
+
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
-        self.el2n_scores[idxs] = el2ns
+        self.softforget_scores = self.forget_stats["num_softforgets"].copy()
+        self.softforget_scores[self.forget_stats["never_correct"]] = np.inf
+
+        count_first_learns = 0
+        for i, idx in enumerate(idxs):
+            if self.all_scores["firstlearniter"][idx] == np.inf and corrects[i] == 1:
+                self.all_scores["firstlearniter"][idx] = self.global_iters
+                count_first_learns += 1
+
+            if prev_corrects_in_batch[i] == 0 and corrects[i] == 1:
+                self.all_scores["finallearniter"][idx] = self.global_iters
+            
+            for k, v in pred_scores.items():
+                self.all_scores[k][idx] += v[i]
+
+            self.all_scores["forget"][idx] = self.forget_scores[idx]
+            self.all_scores["softforget"][idx] = self.softforget_scores[idx]
+        wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
         return
-
-    def save_first_learn_iters(self):
-        save_path = os.path.join(self.logdir,
-                                 "first_learn_iters",
-                                 f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
-        np.savetxt(save_path, self.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
-
-    def save_forget_scores(self):
-        save_path = os.path.join(self.logdir,
-                                 "forget_scores",
-                                 f"fs_task={self.current_task}_globaliter={self.global_iters}.npy")
-        np.save(save_path, self.forget_scores)
-
-    def save_el2n_scores(self):
-        save_path = os.path.join(self.logdir,
-                                 "el2n_scores",
-                                 f"el2ns_task={self.current_task}_globaliter={self.global_iters}.npy")
-        np.save(save_path, self.el2n_scores)
 
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
@@ -466,69 +477,84 @@ class SupTrainerWForgetStats(SupTrainer):
         model_output = self.model(input_images)
 
         loss_mean = self.calc_loss_on_batch(model_output, target)
-        predictions = torch.argmax(model_output, dim=1)
+        predictions = torch.argmax(model_output, dim=1).detach()
         corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
         accuracy_mean = torch.mean(torch.eq(predictions, target).float())
-        softmax_preds = torch.softmax(model_output, dim=1).detach().cpu()
-        onehot_targets = torch.nn.functional.one_hot(target, num_classes=softmax_preds.shape[-1]).detach().cpu()
-        el2ns = torch.norm(softmax_preds - onehot_targets, p=2, dim=-1).numpy()
+
+        softmax_output = torch.nn.functional.softmax(model_output, dim=-1).detach()
+        softmax_preds = softmax_output.gather(1, target.unsqueeze(dim=1)).squeeze().cpu().numpy()
+        pred_scores = self._calculate_predscores_on_batch(target, softmax_output, softmax_preds, predictions)
 
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy_mean,
                    'corrects': corrects,
-                   'el2ns': el2ns}
+                   'softmax_preds': softmax_preds,
+                   'pred_scores': pred_scores}
         return results
+
+    def _calculate_predscores_on_batch(self, target, softmax_output, softmax_preds, predictions):
+        scores = {}
+        accuracies = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
+        softmax_output = softmax_output
+        onehot_targets = torch.nn.functional.one_hot(target, num_classes=softmax_output.shape[-1]).detach()
+        el2ns = torch.norm(softmax_output - onehot_targets, p=2, dim=-1).cpu().numpy()
+        pmax = softmax_output.gather(1, predictions.unsqueeze(dim=1)).squeeze().cpu().numpy()
+        negentropy = (- torch.sum(softmax_output * torch.log(softmax_output), axis=1)).cpu().numpy()
+        scores["accuracy"] = accuracies
+        scores["el2n"] = el2ns
+        scores["pcorrect"] = softmax_preds
+        scores["pmax"] = pmax
+        scores["negentropy"] = negentropy
+        return scores
 
     def on_iter_end(self, batch, batch_results):
         super(SupTrainerWForgetStats, self).on_iter_end(batch, batch_results)
         indices_in_ds = batch[2]
-        corrects = batch_results["corrects"]
-        el2ns = batch_results["el2ns"]
-        self.update_forget_stats(indices_in_ds, corrects, el2ns)
+        self.update_forget_stats_and_scores(indices_in_ds, batch_results["corrects"], batch_results["softmax_preds"], batch_results["pred_scores"])
         if self.global_iters % self.log_score_freq == 0:
-            self.save_forget_scores()
-            self.save_el2n_scores()
-            self._log_forget_scores_hist(self.forget_scores)
-            self._log_el2n_scores_hist(self.el2n_scores)
+            for score_type, scores in self.all_scores.items():
+                self._save_scores(score_type, scores)
+                self._log_scores_hist(self.all_scores[score_type], score_type)
             
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
-                       "count corrects": sum(corrects),
+                       "count corrects": sum(batch_results["corrects"]),
                        "count never_correct": len(self.forget_stats["never_correct"]),
-                       "count all_first_learnt": np.count_nonzero(np.isfinite(self.forget_stats["first_learn_iters"]))}
+                       "count all_first_learnt": np.count_nonzero(np.isfinite(self.all_scores["firstlearniter"]))}
 
             wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
         return
 
+    def on_epoch_end(self):
+        super(SupTrainerWForgetStats, self).on_epoch_end()
+        for score_type, scores in self.all_scores.items():
+            self._save_scores(score_type, scores)
+        return
+
     def on_task_end(self):
         super(SupTrainerWForgetStats, self).on_task_end()
-        self.save_forget_scores()
-        self.save_first_learn_iters()
-        self.save_el2n_scores()
+        for score_type, scores in self.all_scores.items():
+            self._save_scores(score_type, scores)
         return
 
-    def _log_forget_scores_hist(self, fs, bins=20):
-        if sum(np.isinf(fs)) > 0:
-            fs[fs == np.inf] = -1
+    def _log_scores_hist(self, globalscores, score_type="forget", bins=20):
+        scores = globalscores.copy()
+        if sum(np.isinf(scores)) > 0:
+            scores[scores == np.inf] = -1
         fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-        axs.hist(fs, bins=bins)
-        plt.title(f"Forget scores at {self.global_iters} steps, task {self.current_task}")
-        plt.xlabel("Number of forgetting events occurred")
-        plt.ylabel("Number of training samples")
-        wandb.log({"forget scores histogram": wandb.Image(fig)}, step=self.global_iters)
+        axs.hist(scores, bins=bins)
+        plt.title(f"{score_type} scores at {self.global_iters} steps, task {self.current_task}")
+        plt.xlabel(f"{self.all_scores_descriptions[score_type]}")
+        plt.ylabel("Count of training samples")
+        wandb.log({f"{score_type} scores histogram": wandb.Image(fig)}, step=self.global_iters)
         plt.close()
         return
 
-    def _log_el2n_scores_hist(self, el2ns, bins=20):
-        if sum(np.isinf(el2ns)) > 0:
-            el2ns[el2ns == np.inf] = -1
-        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-        axs.hist(el2ns, bins=bins)
-        plt.title(f"EL2N scores at {self.global_iters} steps, task {self.current_task}")
-        plt.xlabel("L2 norm of the error vector")
-        plt.ylabel("Number of training samples")
-        wandb.log({"el2n scores histogram": wandb.Image(fig)}, step=self.global_iters)
-        plt.close()
-        return
+    def _save_scores(self, score_type, scores):
+        save_path = os.path.join(self.logdir,
+                                 "all_scores",
+                                 f"{score_type}_scores",
+                                 f"{score_type}scores_task={self.current_task}_globaliter={self.global_iters}.npy")
+        np.save(save_path, scores)
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
