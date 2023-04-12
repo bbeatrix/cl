@@ -558,7 +558,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
-class SupTrainerWReplay(SupTrainer):
+class SupTrainerWReplay(SupTrainerWForgetStats):
     MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank", "fixedscorerank", "fixedunforgettables"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
@@ -718,11 +718,13 @@ class SupTrainerWReplay(SupTrainer):
 
         softmax_output = torch.nn.functional.softmax(model_output, dim=-1).detach()
         softmax_preds = softmax_output.gather(1, target.unsqueeze(dim=1)).squeeze().cpu().numpy()
+        pred_scores = self._calculate_predscores_on_batch(target, softmax_output, softmax_preds, predictions)
 
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy_mean,
                    'corrects': corrects,
-                   'softmax_preds': softmax_preds}
+                   'softmax_preds': softmax_preds,
+                   'pred_scores': pred_scores}
         return results
 
     def _test_on_memcontent(self, mem_content):
