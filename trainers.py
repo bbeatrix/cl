@@ -456,11 +456,11 @@ class SupTrainerWForgetStats(SupTrainer):
         count_first_learns = 0
         for i, idx in enumerate(idxs):
             if self.all_scores["firstlearniter"][idx] == np.inf and corrects[i] == 1:
-                self.all_scores["firstlearniter"][idx] = self.global_iters
+                self.all_scores["firstlearniter"][idx] = self.global_iters - (self.current_task * self.iters_per_task)
                 count_first_learns += 1
 
             if prev_corrects_in_batch[i] == 0 and corrects[i] == 1:
-                self.all_scores["finallearniter"][idx] = self.global_iters
+                self.all_scores["finallearniter"][idx] = self.global_iters - (self.current_task * self.iters_per_task)
             
             for k, v in pred_scores.items():
                 self.all_scores[k][idx] += v[i]
