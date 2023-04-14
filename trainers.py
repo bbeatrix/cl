@@ -422,7 +422,9 @@ class SupTrainerWForgetStats(SupTrainer):
                                        "el2n": "Sum of l2 norm of error vectors", "negentropy": "Sum of negative entropies of softmax outputs",
                                        "accuracy": "Sum of prediction accuracies",
                                        "pcorrect": "Sum of correct prediction probabilities", "pmax": "Sum of maximum prediction probabilities",
-                                       "firstlearniter": "Iteration of first learning event", "finallearniter": "Iteration of final learning event"}
+                                       "firstlearniter": "Iteration of first learning event", "finallearniter": "Iteration of final learning event",
+                                       "firstencounteriter": "Iteration of first encounter",
+                                       "adjustedfirstencounteriter": "Adjusted iteration of first encounter"}
         if not os.path.isdir(os.path.join(self.logdir, "all_scores")):
             os.makedirs(os.path.join(self.logdir, "all_scores"))
         for score_type in self.all_scores_descriptions.keys():
@@ -455,6 +457,10 @@ class SupTrainerWForgetStats(SupTrainer):
 
         count_first_learns = 0
         for i, idx in enumerate(idxs):
+            if self.all_scores["firstencounteriter"][idx] == np.inf:
+                self.all_scores["firstencounteriter"][idx] = self.global_iters
+            if self.all_scores["adjustedfirstencounteriter"][idx] == np.inf:
+                self.all_scores["adjustedfirstencounteriter"][idx] = self.global_iters - (self.current_task * self.iters_per_task)
             if self.all_scores["firstlearniter"][idx] == np.inf and corrects[i] == 1:
                 self.all_scores["firstlearniter"][idx] = self.global_iters - (self.current_task * self.iters_per_task)
                 count_first_learns += 1
