@@ -10,7 +10,12 @@ runnames = {'1256': 'cifar10_base_ept=200',
             '1259': 'cifar10_clheavyaugment_ept=200',
             '1248': 'cifar10_clwreplayfscoreunforgettables_ept=10'}
 
-runs = api.runs("bbea/cl", {"display_name": {"$regex": "^(1256|1255|1254|1257|1259|1248)-.*$"}}) # | to add multiple run ids... 
+runnames = {'1260': 'cifar10_clreservoirmem_ept=10',
+            '1261': 'cifar10_clreservoirmem_ept=200',
+            '1262': 'cifar10_clreservoirmemheavyaugment_ept=10',
+            '1263': 'cifar10_clreservoirmemheavyaugment_ept=200'}
+
+runs = api.runs("bbea/cl", {"display_name": {"$regex": "^(1260|1261|1262|1263)-.*$"}}) # | to add multiple run ids... 
 print(len(runs))
 print([run.id for run in runs])
 print([run.name for run in runs])

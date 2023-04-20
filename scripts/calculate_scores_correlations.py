@@ -30,11 +30,12 @@ def calc_and_plot_corr(all_scores_df, plot_name):
     plt.xticks(rotation=90, ha='right')
 
     # Highlight the specified row with a black border
-    row_idx = all_scores_df.columns.get_loc(list(all_scores_df.filter(like='forget').columns)[0])
-    for col_idx in range(row_idx, len(all_scores_df.columns)):
-        ax.add_patch(plt.Rectangle((col_idx, row_idx), 1, 1, fill=False, edgecolor='black', lw=3))
-    for col_idx in range(row_idx):
-        ax.add_patch(plt.Rectangle((row_idx, col_idx), 1, 1, fill=False, edgecolor='black', lw=3))
+    if len(list(all_scores_df.filter(like='forget').columns)) > 0:
+        row_idx = all_scores_df.columns.get_loc(list(all_scores_df.filter(like='forget').columns)[0])
+        for col_idx in range(row_idx, len(all_scores_df.columns)):
+            ax.add_patch(plt.Rectangle((col_idx, row_idx), 1, 1, fill=False, edgecolor='black', lw=3))
+        for col_idx in range(row_idx):
+            ax.add_patch(plt.Rectangle((row_idx, col_idx), 1, 1, fill=False, edgecolor='black', lw=3))
 
     plt.savefig(f"./outputs/figures/{plot_name}_score_correlations.jpg", dpi=300)
 
@@ -42,44 +43,42 @@ def calc_and_plot_corr(all_scores_df, plot_name):
 def main():
     dirs = os.listdir("./data/all_scores_for_rankcorr/")
     print(dirs)
+    d = [(d1, d2) for i, d1 in enumerate(dirs) for d2 in dirs[i + 1:]]
+    print(len(d))
 
-    for dir1 in dirs:
-        for dir2 in dirs:
-            if dir1 != dir2:
-                print(dir1, " vs ", dir2)
-                files1 = os.listdir(f"./data/all_scores_for_rankcorr/{dir1}")
-                files2 = os.listdir(f"./data/all_scores_for_rankcorr/{dir2}")
-                files = [os.path.join(dir1, f) for f in files1] + [os.path.join(dir2, f) for f in files2]
+    for item in d:
+        dir1 = item[0]
+        dir2 = item[1]
 
-                files = sorted([file for file in files if file.endswith(".npy")])
-                print(files)
-                all_scores = {}
+        assert dir1 != dir2, "dir1 and dir2 are the same"
 
-                cscore = np.load("./data/cifar10_train_precomputed_cscores.npy")
-                all_scores["cscore"] = cscore
+        print(dir1, " vs ", dir2)
+        files1 = os.listdir(f"./data/all_scores_for_rankcorr/{dir1}")
+        files2 = os.listdir(f"./data/all_scores_for_rankcorr/{dir2}")
+        files = [os.path.join(dir1, f) for f in files1] + [os.path.join(dir2, f) for f in files2]
 
-                for file in files:
-                    print(file)
-                    if "/" in file:
-                        onlyfile = file.split("/")[-1]
-                    label = onlyfile.split(".")[0].split("_")[1] + "_" + onlyfile.split(".")[0].split("_")[3]
-                    print(label)
+        files = sorted([file for file in files if file.endswith(".npy")])
+        print(files)
+        all_scores = {}
 
-                    #if "heavyaugment" not in label and "epoch=200" in file:
-                    score = np.load(f"./data/all_scores_for_rankcorr/{file}")
-                    print(score.shape)
-                    all_scores[label] = score
-                    #    label = label + "_epoch200" # + "_transformed"
-                    #if "cl" in label and "finallearniter" in label:
-                    #    score = np.square(score)
-                    #    label = label + "_transformed"
-                    
-                    #else:
-                    #    all_scores[label] = score
+        cscore = np.load("./data/cifar10_train_precomputed_cscores.npy")
+        all_scores["cscore"] = cscore
 
-                all_scores_df = pd.DataFrame(all_scores)
-                print(all_scores_df.columns)
-                calc_and_plot_corr(all_scores_df, f"{dir1}_vs_{dir2}")
+        for file in files:
+            print(file)
+            if "/" in file:
+                onlyfile = file.split("/")[-1]
+            label = onlyfile.split(".")[0].split("_")[1] + "_" + onlyfile.split(".")[0].split("_")[3]
+            print(label)
+
+            score = np.load(f"./data/all_scores_for_rankcorr/{file}")
+            print(score.shape)
+            all_scores[label] = score
+
+
+        all_scores_df = pd.DataFrame(all_scores)
+        print(all_scores_df.columns)
+        calc_and_plot_corr(all_scores_df, f"{dir1}_vs_{dir2}")
 
     print("Done")
 
