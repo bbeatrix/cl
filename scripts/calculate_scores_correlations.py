@@ -37,7 +37,7 @@ def calc_and_plot_corr(all_scores_df, plot_name):
         for col_idx in range(row_idx):
             ax.add_patch(plt.Rectangle((row_idx, col_idx), 1, 1, fill=False, edgecolor='black', lw=3))
 
-    plt.savefig(f"./outputs/figures/{plot_name}_score_correlations.jpg", dpi=300)
+    plt.savefig(f"./outputs/figures/score_correlations/{plot_name}_score_correlations.jpg", dpi=300)
 
 
 def main():
@@ -68,8 +68,7 @@ def main():
             print(file)
             if "/" in file:
                 onlyfile = file.split("/")[-1]
-            label = onlyfile.split(".")[0].split("_")[1] + "_" + onlyfile.split(".")[0].split("_")[3]
-            print(label)
+            label = onlyfile.split(".")[0].split("_")[1] + "_" + onlyfile.split(".")[0].split("_")[2] + "_" + onlyfile.split(".")[0].split("_")[3]
 
             score = np.load(f"./data/all_scores_for_rankcorr/{file}")
             print(score.shape)
