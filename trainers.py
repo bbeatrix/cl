@@ -410,21 +410,26 @@ class SupTrainerWForgetStats(SupTrainer):
             "prev_corrects": np.zeros(self.num_train_examples, dtype=np.int32),
             "num_forgets": np.zeros(self.num_train_examples, dtype=float),
             "num_softforgets": np.zeros(self.num_train_examples, dtype=float),
+            "num_softforgets2": np.zeros(self.num_train_examples, dtype=float),
             "never_correct": np.arange(self.num_train_examples, dtype=np.int32),
+            "prev_softmaxpreds": np.zeros(self.num_train_examples, dtype=float),
         }
         self.forget_scores = self.forget_stats["num_forgets"].copy()
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         self.softforget_scores = self.forget_stats["num_softforgets"].copy()
         self.softforget_scores[self.forget_stats["never_correct"]] = np.inf
+        self.softforget2_scores = self.forget_stats["num_softforgets2"].copy()
+        self.softforget2_scores[self.forget_stats["never_correct"]] = np.inf
 
         self.all_scores = {}
         self.all_scores_descriptions = {"forget": "Number of forgetting events occurred", "softforget": "Number of soft forgetting events occurred",
-                                       "el2n": "Sum of l2 norm of error vectors", "negentropy": "Sum of negative entropies of softmax outputs",
-                                       "accuracy": "Sum of prediction accuracies",
-                                       "pcorrect": "Sum of correct prediction probabilities", "pmax": "Sum of maximum prediction probabilities",
-                                       "firstlearniter": "Iteration of first learning event", "finallearniter": "Iteration of final learning event",
-                                       "firstencounteriter": "Iteration of first encounter",
-                                       "adjustedfirstencounteriter": "Adjusted iteration of first encounter"}
+                                        "softforget2": "Number of second type of soft forgetting events occurred",
+                                        "el2n": "Sum of l2 norm of error vectors", "negentropy": "Sum of negative entropies of softmax outputs",
+                                        "accuracy": "Sum of prediction accuracies",
+                                        "pcorrect": "Sum of correct prediction probabilities", "pmax": "Sum of maximum prediction probabilities",
+                                        "firstlearniter": "Iteration of first learning event", "finallearniter": "Iteration of final learning event",
+                                        "firstencounteriter": "Iteration of first encounter",
+                                        "adjustedfirstencounteriter": "Adjusted iteration of first encounter"}
         if not os.path.isdir(os.path.join(self.logdir, "all_scores")):
             os.makedirs(os.path.join(self.logdir, "all_scores"))
         for score_type in self.all_scores_descriptions.keys():
@@ -438,10 +443,16 @@ class SupTrainerWForgetStats(SupTrainer):
     def update_forget_stats_and_scores(self, idxs, corrects, softmax_preds, pred_scores):
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         softforget_conditions = (self.forget_stats["prev_corrects"][idxs] == 1) & (softmax_preds < self.softforget_pred_threshold)
+        softforget2_conditions = (self.forget_stats["prev_softmaxpreds"][idxs] > self.softforget_pred_threshold) & (softmax_preds < self.softforget_pred_threshold)
         idxs_where_softforgetting = idxs[softforget_conditions]
+        idxs_where_softforgetting2 = idxs[softforget2_conditions]
 
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["num_softforgets"][idxs_where_softforgetting] += 1
+        self.forget_stats["num_softforgets2"][idxs_where_softforgetting2] += 1
+        print(softmax_preds.shape, self.forget_stats["prev_softmaxpreds"][idxs].shape)
+        self.forget_stats["prev_softmaxpreds"][idxs] = softmax_preds
+
         prev_corrects_in_batch = self.forget_stats["prev_corrects"][idxs]
         self.forget_stats["prev_corrects"][idxs] = corrects 
         self.forget_stats["never_correct"] = np.setdiff1d(
@@ -454,6 +465,8 @@ class SupTrainerWForgetStats(SupTrainer):
         self.forget_scores[self.forget_stats["never_correct"]] = np.inf
         self.softforget_scores = self.forget_stats["num_softforgets"].copy()
         self.softforget_scores[self.forget_stats["never_correct"]] = np.inf
+        self.softforget2_scores = self.forget_stats["num_softforgets2"].copy()
+        self.softforget2_scores[self.forget_stats["never_correct"]] = np.inf
 
         count_first_learns = 0
         for i, idx in enumerate(idxs):
@@ -473,6 +486,7 @@ class SupTrainerWForgetStats(SupTrainer):
 
             self.all_scores["forget"][idx] = self.forget_scores[idx]
             self.all_scores["softforget"][idx] = self.softforget_scores[idx]
+            self.all_scores["softforget2"][idx] = self.softforget2_scores[idx]
         wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
         return
 
