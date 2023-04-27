@@ -404,6 +404,7 @@ class SupTrainerWForgetStats(SupTrainer):
     def __init__(self, device, model, data, logdir, log_score_freq=100):
         super().__init__(device, model, data, logdir)
         self.softforget_pred_threshold = 0.9
+        self.softforget_pred_threshold2 = 0.75
         self.log_score_freq = log_score_freq
         self.num_train_examples = len(data.train_dataset)
         self.forget_stats = {
@@ -443,7 +444,7 @@ class SupTrainerWForgetStats(SupTrainer):
     def update_forget_stats_and_scores(self, idxs, corrects, softmax_preds, pred_scores):
         idxs_where_forgetting = idxs[self.forget_stats["prev_corrects"][idxs] > corrects]
         softforget_conditions = (self.forget_stats["prev_corrects"][idxs] == 1) & (softmax_preds < self.softforget_pred_threshold)
-        softforget2_conditions = (self.forget_stats["prev_softmaxpreds"][idxs] > self.softforget_pred_threshold) & (softmax_preds < self.softforget_pred_threshold)
+        softforget2_conditions = (self.forget_stats["prev_softmaxpreds"][idxs] > self.softforget_pred_threshold2) & (softmax_preds < self.softforget_pred_threshold2)
         idxs_where_softforgetting = idxs[softforget_conditions]
         idxs_where_softforgetting2 = idxs[softforget2_conditions]
 
