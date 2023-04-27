@@ -33,10 +33,10 @@ def calc_and_plot_corr(all_scores_df, plot_name):
 
 
 def main():
-    dir1 = "cifar10_base_ept=200"
-    dir2 = "cifar10_cl_ept=20"
+    dir1 = "cifar10_baseheavyaugment_ept=200"
+    dir2 = "cifar10_clheavyaugment_ept=200"
     scoretype1 = "forget"
-    scoretype2 = "softforget"
+    scoretype2 = "softforget2"
 
     print(dir1, " vs ", dir2)
     files1 = os.listdir(f"./data/all_scores_for_rankcorr/{dir1}")
