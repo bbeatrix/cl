@@ -165,7 +165,8 @@ class PrecomputedScoresRankMemory(FixedMemory):
 
 
 class FixedScoresRankMemory(FixedMemory):
-    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path, dataset_indices_in_orig, score_order, score_type):
+    def __init__(self, image_shape, target_shape, device, size_limit, precomputed_scores_path, dataset_indices_in_orig, score_order, score_type, 
+                 randomselect_unforgettables=False):
         super().__init__(image_shape, target_shape, device, size_limit)
 
         self.global_precomputed_scores_with_labels = np.load(precomputed_scores_path)
@@ -173,6 +174,7 @@ class FixedScoresRankMemory(FixedMemory):
         self.dataset_indices_in_orig = dataset_indices_in_orig
         self.trainset_precomputed_scores_with_labels = self.global_precomputed_scores_with_labels[:, self.dataset_indices_in_orig]
 
+        self.randomselect_unforgettables = randomselect_unforgettables
         self.score_type = score_type
         self.score_order = score_order
         self.content.update({"scores": -100 * np.ones(self.size_limit, dtype=float)})
@@ -212,6 +214,9 @@ class FixedScoresRankMemory(FixedMemory):
             elif self.score_order == "unforgettables":
                 unforgettables_indices = np.where(class_scores == 0)[0]
                 selected_indices = unforgettables_indices[:selection_size]
+                if self.randomselect_unforgettables:
+                    selected_indices = np.random.choice(unforgettables_indices, selection_size, replace=False)
+                    logging.info(f"Selected unforgettables for class {target}: {selected_indices}")
 
         self.selected_indices_per_class[target] = [self.dataset_indices_in_orig[i] for i in class_indices[selected_indices]]
         return

@@ -585,7 +585,7 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
                  score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False,
-                 use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True):
+                 use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True, randomselect_unforgettables=False):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
@@ -611,6 +611,7 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
             self.use_soft_forgets = use_soft_forgets
             self.softforget_pred_threshold = softforget_pred_threshold
             self.replace_newest = replace_newest
+            self.randomselect_unforgettables = randomselect_unforgettables
             self.init_memory()
 
     def init_memory(self):
@@ -642,6 +643,7 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
                 dataset_indices_in_orig=[idx for idxl in self.data.train_task_datasets_indices_in_orig for idx in idxl],
                 score_order=self.score_order,
                 score_type=self.score_type,
+                randomselect_unforgettables=self.randomselect_unforgettables,
             )
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
