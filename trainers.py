@@ -451,7 +451,6 @@ class SupTrainerWForgetStats(SupTrainer):
         self.forget_stats["num_forgets"][idxs_where_forgetting] += 1
         self.forget_stats["num_softforgets"][idxs_where_softforgetting] += 1
         self.forget_stats["num_softforgets2"][idxs_where_softforgetting2] += 1
-        print(softmax_preds.shape, self.forget_stats["prev_softmaxpreds"][idxs].shape)
         self.forget_stats["prev_softmaxpreds"][idxs] = softmax_preds
 
         prev_corrects_in_batch = self.forget_stats["prev_corrects"][idxs]
