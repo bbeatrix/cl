@@ -3,24 +3,26 @@ import os
 import random
 import shutil
 
-from absl import app, flags
 import gin
 import gin.torch
 import gin.torch.external_configurables
 import numpy as np
 import torch
 import wandb
+from absl import app, flags
 
+import contrastive_trainers
 import data
 import models
-import trainers, contrastive_trainers
+import trainers
 from utils import gin_config_to_dict
 
 
 @gin.configurable
-class ExperimentManager():
-    def __init__(self, seed=0, no_cuda=False, num_workers=2, logdir=None, prefix='',
-                 datadir=os.path.expanduser('~/datasets')):
+class ExperimentManager:
+    def __init__(
+        self, seed=0, no_cuda=False, num_workers=2, logdir=None, prefix="", datadir=os.path.expanduser("~/datasets")
+    ):
         self.seed = seed
         self.no_cuda = no_cuda
         self.num_workers = num_workers
@@ -51,33 +53,28 @@ class ExperimentManager():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-        self.device = torch.device('cuda' if use_cuda else 'cpu')
+        self.device = torch.device("cuda" if use_cuda else "cpu")
         logging.info(f"Device: {self.device}")
 
         # Additional info when using cuda
-        if self.device.type == 'cuda':
+        if self.device.type == "cuda":
             logging.info(f"Device name: {torch.cuda.get_device_name()}")
             logging.info(f"Allocated memory: {round(torch.cuda.memory_allocated()/1024**3,1)} GB")
             logging.info(f"Cached memory: {round(torch.cuda.memory_reserved()/1024**3,1)} GB")
 
         if use_cuda:
-            self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
+            self.dataloader_kwargs = {"num_workers": 3, "pin_memory": True}
         else:
-            self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
+            self.dataloader_kwargs = {"num_workers": self.num_workers, "pin_memory": False}
 
     def setup_trainer(self):
-        self.data = data.Data(self.datadir,
-                              self.dataloader_kwargs)
+        self.data = data.Data(self.datadir, self.dataloader_kwargs)
 
-        self.model = models.Model(self.device,
-                                  self.data.input_shape,
-                                  self.data.num_classes)
+        self.model = models.Model(self.device, self.data.input_shape, self.data.num_classes)
 
-        self.trainer = trainers.trainer_maker(self.data.target_type,
-                                              self.device,
-                                              self.model.build(),
-                                              self.data,
-                                              self.logdir)
+        self.trainer = trainers.trainer_maker(
+            self.data.target_type, self.device, self.model.build(), self.data, self.logdir
+        )
 
     def run_experiment(self):
         self.trainer.train()
@@ -90,7 +87,7 @@ def main(argv):
 
     os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
     if "WANDB_API_TOKEN" in os.environ:
-        wandb.init(project="cl", entity="bbea")
+        wandb.init(project="cl_fisher", entity="bbea")
         exp_logdir = wandb.run.dir
         exp_prefix = ""
     else:
@@ -99,7 +96,7 @@ def main(argv):
         exp_prefix = wandb.run.id
 
     run_counter = wandb.run.name.split("-")[-1]
-    wandb.run.name = run_counter + "-" + FLAGS.gin_file[0].split('/')[-1][:-4]
+    wandb.run.name = run_counter + "-" + FLAGS.gin_file[0].split("/")[-1][:-4]
     wandb.run.save()
 
     wandb.config.update(gin_config_to_dict(gin.config_str()))
@@ -115,9 +112,9 @@ def main(argv):
     logging.info("FIN")
 
 
-if __name__ == '__main__':
-    flags.DEFINE_multi_string('gin_file', None, "List of paths to the config files.")
-    flags.DEFINE_multi_string('gin_param', None, "Newline separated list of Gin param bindings.")
+if __name__ == "__main__":
+    flags.DEFINE_multi_string("gin_file", None, "List of paths to the config files.")
+    flags.DEFINE_multi_string("gin_param", None, "Newline separated list of Gin param bindings.")
     FLAGS = flags.FLAGS
 
     app.run(main)
