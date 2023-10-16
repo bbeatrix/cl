@@ -570,9 +570,12 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
                  score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False,
-                 use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True):
+                 use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True, use_gcr_loss=False,):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
+        if use_gcr_loss:
+            self.loss_function = losses.GCRLoss()
+
         self.use_replay = use_replay
 
         if self.use_replay:
