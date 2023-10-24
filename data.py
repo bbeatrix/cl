@@ -1,32 +1,56 @@
 import logging
+import os
+import pickle
+import warnings
+
 import gin
 import gin.torch
 import numpy as np
 import torch
-from torch.utils.data.dataloader import default_collate
-from torchvision import datasets, transforms as tfs
-import pickle
-import os
-import warnings
-
 from timm.data import create_transform
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from torch.utils.data.dataloader import default_collate
+from torchvision import datasets
+from torchvision import transforms as tfs
 
 
-@gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
+@gin.configurable(denylist=["datadir", "dataloader_kwargs"])
 class Data:
-    TARGET_TYPES = ['supervised', 'supervised with forgetstats', 'supervised with replay',
-                    'supervised contrastive', 'unsupervised contrastive', 'supcon with simpreserving',
-                    'supcon with interpolation']
+    TARGET_TYPES = [
+        "supervised",
+        "supervised with forgetstats",
+        "supervised with replay",
+        "supervised contrastive",
+        "unsupervised contrastive",
+        "supcon with simpreserving",
+        "supcon with interpolation",
+    ]
 
     TASKS_SPLIT_TYPES = ["cl", "forgetstatbased", "cl_forgetstatbased", "random"]
     TASKS_ORDER = ["forgettables_first", "unforgettables_first"]
 
-    def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
-                 target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
-                 apply_vit_transforms=False, simple_augmentation=False, normalization=False,
-                 tasks_split_type="cl", forgetstats_path=None, tasks_order="forgettables_first", 
-                 randomsubset_task_datasets=False, randomsubsets_size=5000, use_testset_for_training=False):
+    def __init__(
+        self,
+        datadir,
+        dataloader_kwargs,
+        dataset_name="cifar10",
+        image_size=32,
+        batch_size=64,
+        target_type="supervised contrastive",
+        augment=True,
+        num_tasks=1,
+        num_cycles=1,
+        use_dytox_augmentation=False,
+        apply_vit_transforms=False,
+        simple_augmentation=False,
+        normalization=False,
+        tasks_split_type="cl",
+        forgetstats_path=None,
+        tasks_order="forgettables_first",
+        randomsubset_task_datasets=False,
+        randomsubsets_size=5000,
+        use_testset_for_training=False,
+    ):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         err_message = "Tasks' split type must be element of {}".format(self.TASKS_SPLIT_TYPES)
@@ -52,19 +76,17 @@ class Data:
         self.randomsubset_task_datasets = randomsubset_task_datasets
         self.randomsubsets_size = randomsubsets_size
         self.use_testset_for_training = use_testset_for_training
-        self.use_dytox_augmentation = True
+        self.use_dytox_augmentation = use_dytox_augmentation
 
         self._setup()
 
-
     @property
     def loaders(self):
-        return {'train_loaders': self.train_loaders, 'test_loaders': self.test_loaders}
-
+        return {"train_loaders": self.train_loaders, "test_loaders": self.test_loaders}
 
     def _setup(self):
         self._get_dataset()
-        #if os.path.isfile(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl'):
+        # if os.path.isfile(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl'):
         #    logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
         #    with open(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl', 'rb') as f:
         #        self.train_task_datasets = pickle.load(f)
@@ -72,10 +94,9 @@ class Data:
         #        self.train_task_datasets_indices_in_orig = pickle.load(f)
         #        self.test_task_datasets_indices_in_orig = pickle.load(f)
         #    logging.info(f"Successfully loaded {self.dataset_name} {self.num_tasks} data from pickle.")
-        #else:
+        # else:
         self._create_tasks()
         self._create_loaders()
-
 
     def _build_transform(self, is_train, image_size, dataset_name):
         with warnings.catch_warnings():
@@ -85,31 +106,38 @@ class Data:
                 interpolation = 3
             print(interpolation)
             resize_im = image_size > 32
-            if image_size == 32 and dataset_name == 'cifar100':
-                self.inverse_normalize = tfs.Normalize(mean=(-0.5071/0.2673, -0.4865/0.2564, -0.4409/0.2762),
-                                                       std=[1/0.2673, 1/0.2564, 1/0.2762])
+            if image_size == 32 and dataset_name == "cifar100":
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(-0.5071 / 0.2673, -0.4865 / 0.2564, -0.4409 / 0.2762),
+                    std=[1 / 0.2673, 1 / 0.2564, 1 / 0.2762],
+                )
             else:
-                self.inverse_normalize = tfs.Normalize(mean=(-IMAGENET_DEFAULT_MEAN[0]/IMAGENET_DEFAULT_STD[0], -IMAGENET_DEFAULT_MEAN[1]/IMAGENET_DEFAULT_STD[1], -IMAGENET_DEFAULT_MEAN[2]/IMAGENET_DEFAULT_STD[2]),
-                                                       std=[1/IMAGENET_DEFAULT_STD[0], 1/IMAGENET_DEFAULT_STD[1], 1/IMAGENET_DEFAULT_STD[2]])
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(
+                        -IMAGENET_DEFAULT_MEAN[0] / IMAGENET_DEFAULT_STD[0],
+                        -IMAGENET_DEFAULT_MEAN[1] / IMAGENET_DEFAULT_STD[1],
+                        -IMAGENET_DEFAULT_MEAN[2] / IMAGENET_DEFAULT_STD[2],
+                    ),
+                    std=[1 / IMAGENET_DEFAULT_STD[0], 1 / IMAGENET_DEFAULT_STD[1], 1 / IMAGENET_DEFAULT_STD[2]],
+                )
             if is_train:
                 # this should always dispatch to transforms_imagenet_train
                 transform = create_transform(
                     input_size=image_size,
                     is_training=True,
                     color_jitter=0.4,
-                    auto_augment='rand-m9-mstd0.5-inc1',
-                    interpolation='bicubic',
+                    auto_augment="rand-m9-mstd0.5-inc1",
+                    interpolation="bicubic",
                     re_prob=0.0,
-                    re_mode='pixel',
+                    re_mode="pixel",
                     re_count=1,
                 )
                 if not resize_im:
                     # replace RandomResizedCropAndInterpolation with
                     # RandomCrop
-                    transform.transforms[0] = tfs.RandomCrop(
-                        image_size, padding=4)
+                    transform.transforms[0] = tfs.RandomCrop(image_size, padding=4)
 
-                if image_size == 32 and dataset_name == 'cifar100':
+                if image_size == 32 and dataset_name == "cifar100":
                     transform.transforms[-1] = tfs.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
                 return transform
 
@@ -122,7 +150,7 @@ class Data:
                 t.append(tfs.CenterCrop(image_size))
 
             t.append(tfs.ToTensor())
-            if image_size == 32 and dataset_name == 'cifar100':
+            if image_size == 32 and dataset_name == "cifar100":
                 # Normalization values for CIFAR100
                 t.append(tfs.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)))
             else:
@@ -142,94 +170,110 @@ class Data:
             self.input_shape = (3, self.image_size, self.image_size)
 
             if self.apply_vit_transforms is True:
-                augment_transforms = [tfs.Resize(self.image_size),
-                                      tfs.RandomHorizontalFlip()]
+                augment_transforms = [tfs.Resize(self.image_size), tfs.RandomHorizontalFlip()]
 
-                image_transforms = [tfs.Resize(self.image_size),
-                                    tfs.ToTensor(),
-                                    tfs.Normalize(mean=[0.5, 0.5, 0.5],
-                                                  std=[0.5, 0.5, 0.5])]
+                image_transforms = [
+                    tfs.Resize(self.image_size),
+                    tfs.ToTensor(),
+                    tfs.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+                ]
             if self.simple_augmentation:
-                augment_transforms = [tfs.RandomCrop(self.image_size, padding=4),
-                                      tfs.RandomHorizontalFlip()]
+                augment_transforms = [tfs.RandomCrop(self.image_size, padding=4), tfs.RandomHorizontalFlip()]
             else:
-                augment_transforms = [tfs.RandomResizedCrop(size=self.image_size,
-                                                            scale=(0.2, 1.)),
-                                      tfs.RandomHorizontalFlip(),
-                                      tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)],
-                                                      p=0.8),
-                                      tfs.RandomGrayscale(p=0.2)]
+                augment_transforms = [
+                    tfs.RandomResizedCrop(size=self.image_size, scale=(0.2, 1.0)),
+                    tfs.RandomHorizontalFlip(),
+                    tfs.RandomApply([tfs.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                    tfs.RandomGrayscale(p=0.2),
+                ]
 
         train_transforms = augment_transforms + image_transforms
         test_transforms = image_transforms
 
-        if self.dataset_name in ['cifar100', 'imagenet100'] and self.use_dytox_augmentation:
+        if self.dataset_name in ["cifar100", "imagenet100"] and self.use_dytox_augmentation:
             logging.info("Using CIFAR100/Imagenet100 dataset and dytox augmentation!!!!")
-            train_transforms = self._build_transform(is_train=True, image_size=self.image_size, dataset_name=self.dataset_name)
-            test_transforms = self._build_transform(is_train=False, image_size=self.image_size, dataset_name=self.dataset_name)
+            train_transforms = self._build_transform(
+                is_train=True, image_size=self.image_size, dataset_name=self.dataset_name
+            )
+            test_transforms = self._build_transform(
+                is_train=False, image_size=self.image_size, dataset_name=self.dataset_name
+            )
 
-        if self.dataset_name == 'cifar10':
+        if self.dataset_name == "cifar10":
             self.input_shape, self.num_classes = (3, 32, 32), 10
 
             if self.normalization:
-                train_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465),
-                                                      std=(0.247, 0.243, 0.261)))
-                test_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465),
-                                                     std=(0.247, 0.243, 0.261)))
-                self.inverse_normalize = tfs.Normalize(mean=(-0.4914/0.247, -0.4822/0.243, -0.4465/0.261),
-                                                       std=[1/0.247, 1/0.243, 1/0.261])
-            self.train_dataset = datasets.CIFAR10(self.datadir,
-                                                  train=True,
-                                                  download=True,
-                                                  transform=tfs.Compose(train_transforms))
-            self.test_dataset = datasets.CIFAR10(self.datadir,
-                                                 train=False,
-                                                 download=True,
-                                                 transform=tfs.Compose(test_transforms))
-        elif self.dataset_name == 'cifar100':
+                train_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.247, 0.243, 0.261)))
+                test_transforms.append(tfs.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.247, 0.243, 0.261)))
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(-0.4914 / 0.247, -0.4822 / 0.243, -0.4465 / 0.261), std=[1 / 0.247, 1 / 0.243, 1 / 0.261]
+                )
+            self.train_dataset = datasets.CIFAR10(
+                self.datadir, train=True, download=True, transform=tfs.Compose(train_transforms)
+            )
+            self.test_dataset = datasets.CIFAR10(
+                self.datadir, train=False, download=True, transform=tfs.Compose(test_transforms)
+            )
+        elif self.dataset_name == "cifar100":
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
             if self.normalization and not self.use_dytox_augmentation:
-                train_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
-                                                      std=(0.2673, 0.2564, 0.2762)))
-                test_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
-                                                     std=(0.2673, 0.2564, 0.2762)))
-                self.inverse_normalize = tfs.Normalize(mean=(-0.5071/0.2673, -0.4865/0.2564, -0.4409/0.2762),
-                                                       std=[1/0.2673, 1/0.2564, 1/0.2762])
+                train_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409), std=(0.2673, 0.2564, 0.2762)))
+                test_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409), std=(0.2673, 0.2564, 0.2762)))
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(-0.5071 / 0.2673, -0.4865 / 0.2564, -0.4409 / 0.2762),
+                    std=[1 / 0.2673, 1 / 0.2564, 1 / 0.2762],
+                )
                 train_transforms = tfs.Compose(train_transforms)
                 test_transforms = tfs.Compose(test_transforms)
-            self.train_dataset = datasets.CIFAR100(self.datadir,
-                                                   train=True,
-                                                   download=True,
-                                                   transform=train_transforms)
-            self.test_dataset = datasets.CIFAR100(self.datadir,
-                                                  train=False,
-                                                  download=True,
-                                                  transform=test_transforms)
-        elif self.dataset_name == 'miniimagenet':
+            self.train_dataset = datasets.CIFAR100(self.datadir, train=True, download=True, transform=train_transforms)
+            self.test_dataset = datasets.CIFAR100(self.datadir, train=False, download=True, transform=test_transforms)
+        elif self.dataset_name == "imagenet100":
+            self.input_shape, self.num_classes = (3, 224, 224), 100
+
+            # insert resize transform at the beginning of both train and test transforms
+            train_transforms.insert(0, tfs.Resize(self.image_size))
+            test_transforms.insert(0, tfs.Resize(self.image_size))
+
+            print(train_transforms)
+            print(test_transforms)
+
+            if self.normalization and not self.use_dytox_augmentation:
+                train_transforms.append(tfs.Normalize(mean=(0.4599, 0.4562, 0.3856), std=(0.1960, 0.1913, 0.1887)))
+                test_transforms.append(tfs.Normalize(mean=(0.4599, 0.4562, 0.3856), std=(0.1960, 0.1913, 0.1887)))
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(-0.4599 / 0.1960, -0.4562 / 0.1913, -0.3856 / 0.1887),
+                    std=(1 / 0.1960, 1 / 0.1913, 1 / 0.1887),
+                )
+                train_transforms = tfs.Compose(train_transforms)
+                test_transforms = tfs.Compose(test_transforms)
+            self.train_dataset = datasets.ImageFolder(self.datadir + "/imagenet100_train", transform=train_transforms)
+            self.test_dataset = datasets.ImageFolder(self.datadir + "/imagenet100_val", transform=test_transforms)
+        elif self.dataset_name == "miniimagenet":
             self.input_shape, self.num_classes = (3, 84, 84), 100
 
             if self.normalization:
-                train_transforms.append(tfs.Normalize(mean=(0.4729, 0.4487, 0.4030),
-                                                      std=(0.2833, 0.2752, 0.2886)))
-                test_transforms.append(tfs.Normalize(mean=(0.4729, 0.4487, 0.4030),
-                                                     std=(0.2833, 0.2752, 0.2886)))
-                self.inverse_normalize = tfs.Normalize(mean=(-0.4729/0.2833, -0.4487/0.2752, -0.4030/0.2886),
-                                                       std=[1/0.2833, 1/0.2752, 1/0.2886])
+                train_transforms.append(tfs.Normalize(mean=(0.4729, 0.4487, 0.4030), std=(0.2833, 0.2752, 0.2886)))
+                test_transforms.append(tfs.Normalize(mean=(0.4729, 0.4487, 0.4030), std=(0.2833, 0.2752, 0.2886)))
+                self.inverse_normalize = tfs.Normalize(
+                    mean=(-0.4729 / 0.2833, -0.4487 / 0.2752, -0.4030 / 0.2886),
+                    std=[1 / 0.2833, 1 / 0.2752, 1 / 0.2886],
+                )
 
             import pickle
+
             train_in = open(self.datadir + "/miniimagenet/mini-imagenet-cache-train.pkl", "rb")
             train = pickle.load(train_in)
             train_x = train["image_data"].reshape([64, 600, 84, 84, 3])
             val_in = open(self.datadir + "/miniimagenet/mini-imagenet-cache-val.pkl", "rb")
             val = pickle.load(val_in)
-            val_x = val['image_data'].reshape([16, 600, 84, 84, 3])
+            val_x = val["image_data"].reshape([16, 600, 84, 84, 3])
             test_in = open(self.datadir + "/miniimagenet/mini-imagenet-cache-test.pkl", "rb")
             test = pickle.load(test_in)
-            test_x = test['image_data'].reshape([20, 600, 84, 84, 3])
+            test_x = test["image_data"].reshape([20, 600, 84, 84, 3])
             all_data = np.vstack((train_x, val_x, test_x))
             all_data = np.transpose(all_data, (0, 1, 4, 2, 3)) / 255.0
-            
+
             train_data, train_label, test_data, test_label = [], [], [], []
 
             for i in range(len(all_data)):
@@ -249,23 +293,31 @@ class Data:
             test_data = np.concatenate(test_data)
             test_label = np.concatenate(test_label)
 
-            self.train_dataset = TensorDatasetWTransforms(train_data, train_label, tfs.Compose([tfs.ToPILImage()] + train_transforms))
-            self.test_dataset = TensorDatasetWTransforms(test_data, test_label, tfs.Compose([tfs.ToPILImage()] + test_transforms))
+            self.train_dataset = TensorDatasetWTransforms(
+                train_data, train_label, tfs.Compose([tfs.ToPILImage()] + train_transforms)
+            )
+            self.test_dataset = TensorDatasetWTransforms(
+                test_data, test_label, tfs.Compose([tfs.ToPILImage()] + test_transforms)
+            )
 
         else:
             raise Exception("{} dataset not found!".format(self.dataset_name))
 
-        if self.target_type in ['supervised with forgetstats', 'supervised with replay', 'supervised contrastive']:
+        if self.target_type in ["supervised with forgetstats", "supervised with replay", "supervised contrastive"]:
             self.train_dataset = DatasetWIndices(self.train_dataset)
             self.test_dataset = DatasetWIndices(self.test_dataset)
 
         if self.use_testset_for_training:
             logging.info("Using both the train and test set for training, concatenating them now")
             self.train_dataset = torch.utils.data.ConcatDataset([self.train_dataset, self.test_dataset])
-            logging.info(f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}")
+            logging.info(
+                f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}"
+            )
 
         self.control_group = {"unforgettables": {}, "low_forgettables": {}, "high_forgettables": {}}
-        precomputed_fscores_with_labels = np.load(f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy")
+        precomputed_fscores_with_labels = np.load(
+            f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy"
+        )
 
         for c in range(self.num_classes):
             class_indices = np.where(precomputed_fscores_with_labels[1] == c)[0]
@@ -275,52 +327,61 @@ class Data:
             sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
             low_forgettables_indices = sorted_forgettables_indices[:3]
             high_forgettables_indices = sorted_forgettables_indices[-3:]
-            
-            self.control_group["unforgettables"][c] = [self.train_dataset[i] for i in class_indices[unforgettables_indices]]
-            self.control_group["low_forgettables"][c] = [self.train_dataset[i] for i in class_indices[low_forgettables_indices]]
-            self.control_group["high_forgettables"][c] = [self.train_dataset[i] for i in class_indices[high_forgettables_indices]]
-        
+
+            self.control_group["unforgettables"][c] = [
+                self.train_dataset[i] for i in class_indices[unforgettables_indices]
+            ]
+            self.control_group["low_forgettables"][c] = [
+                self.train_dataset[i] for i in class_indices[low_forgettables_indices]
+            ]
+            self.control_group["high_forgettables"][c] = [
+                self.train_dataset[i] for i in class_indices[high_forgettables_indices]
+            ]
+
         self.images_per_targets = {}
         train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
         for c in range(0, self.num_classes):
             trainset_filtered_indices = np.where(train_targets == c)[0]
             class_images = [self.train_dataset[i] for i in trainset_filtered_indices]
             self.images_per_targets[c] = torch.stack([class_images[i][0] for i in range(len(class_images))])
-        self.full_trainset_loader = torch.utils.data.DataLoader(self.train_dataset,
-                                                           batch_size=self.batch_size,
-                                                           shuffle=False,
-                                                           collate_fn=default_collate,
-                                                           **self.dataloader_kwargs)
+        self.full_trainset_loader = torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=default_collate,
+            **self.dataloader_kwargs,
+        )
 
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
 
         for idx, ds in enumerate(self.train_task_datasets):
-            err_message =  f"Length of {idx}. task dataset {len(ds)} should be greater than the subset size {self.randomsubsets_size}."
+            err_message = f"Length of {idx}. task dataset {len(ds)} should be greater than the subset size {self.randomsubsets_size}."
             assert len(ds) >= self.randomsubsets_size, err_message
 
             indices_permutation = np.random.permutation(len(ds))
-            subset_indices = indices_permutation[:self.randomsubsets_size]
+            subset_indices = indices_permutation[: self.randomsubsets_size]
 
             train_ds_subset = torch.utils.data.Subset(ds, subset_indices)
             self.train_task_datasets[idx] = train_ds_subset
-            self.train_task_datasets_indices_in_orig[idx] = self.train_task_datasets_indices_in_orig[idx][subset_indices]
+            self.train_task_datasets_indices_in_orig[idx] = self.train_task_datasets_indices_in_orig[idx][
+                subset_indices
+            ]
         return
 
     def _create_random_split_task_datasets(self):
-        assert (self.num_tasks == 2), "With the random split 2 tasks are allowed only"
+        assert self.num_tasks == 2, "With the random split 2 tasks are allowed only"
         logging.info(f"Splitting training dataset into {self.num_tasks} random parts.")
-        err_message =  "Number of tarining examples should be divisible by the number of tasks."
+        err_message = "Number of tarining examples should be divisible by the number of tasks."
         assert len(self.train_dataset) % self.num_tasks == 0, err_message
 
         indices_permutation = np.random.permutation(len(self.train_dataset))
         num_concurrent_indices = len(self.train_dataset) // self.num_tasks
 
         for i in range(0, len(self.train_dataset), num_concurrent_indices):
-            split_indices = indices_permutation[i: i + num_concurrent_indices]
+            split_indices = indices_permutation[i : i + num_concurrent_indices]
 
-            train_ds_subset = torch.utils.data.Subset(self.train_dataset,
-                                                      split_indices)
+            train_ds_subset = torch.utils.data.Subset(self.train_dataset, split_indices)
             self.train_task_datasets.append(train_ds_subset)
             self.test_task_datasets.append(self.test_dataset)
             self.train_task_datasets_indices_in_orig.append(split_indices)
@@ -328,7 +389,7 @@ class Data:
         return
 
     def _create_forgetstatbased_split_task_datasets(self):
-        assert (self.num_tasks == 2), "With the forgetstat based split 2 tasks are allowed only"
+        assert self.num_tasks == 2, "With the forgetstat based split 2 tasks are allowed only"
         logging.info(f"Splitting training dataset into {self.num_tasks} parts based on forgetting stats.")
         assert (self.forgetstats_path is not None) == True, "Parameter should be set in config file"
 
@@ -354,17 +415,19 @@ class Data:
             sorted_forgettables_indices = np.argsort(self.forgetstats_with_labels[0][forgettables_indices])
             forgettables_selected_indices = forgettables_indices[sorted_forgettables_indices]
 
-            train_ds_subset1 = torch.utils.data.Subset(train_ds,
-                                                       forgettables_selected_indices)
-            train_ds_subset2 = torch.utils.data.Subset(train_ds,
-                                                       unforgettables_selected_indices)
-            
+            train_ds_subset1 = torch.utils.data.Subset(train_ds, forgettables_selected_indices)
+            train_ds_subset2 = torch.utils.data.Subset(train_ds, unforgettables_selected_indices)
+
             if self.tasks_order == "forgettables_first":
                 self.train_task_datasets.extend([train_ds_subset1, train_ds_subset2])
-                self.train_task_datasets_indices_in_orig.extend([forgettables_selected_indices, unforgettables_selected_indices])
+                self.train_task_datasets_indices_in_orig.extend(
+                    [forgettables_selected_indices, unforgettables_selected_indices]
+                )
             else:
                 self.train_task_datasets.extend([train_ds_subset2, train_ds_subset1])
-                self.train_task_datasets_indices_in_orig.extend([unforgettables_selected_indices, forgettables_selected_indices])
+                self.train_task_datasets_indices_in_orig.extend(
+                    [unforgettables_selected_indices, forgettables_selected_indices]
+                )
 
             self.test_task_datasets.extend([test_datasets_to_split[idx], test_datasets_to_split[idx]])
 
@@ -383,7 +446,7 @@ class Data:
             self.train_task_datasets_indices_in_orig = [list(range(len(self.train_dataset)))]
             self.test_task_datasets_indices_in_orig = [list(range(len(self.test_dataset)))]
 
-        elif self.num_tasks > 1 and self.tasks_split_type  in ["cl", "cl_forgetstatbased"]:
+        elif self.num_tasks > 1 and self.tasks_split_type in ["cl", "cl_forgetstatbased"]:
             logging.info(f"Splitting training and test datasets into {self.num_tasks} parts for cl.")
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
@@ -391,20 +454,18 @@ class Data:
 
             err_message = "Targets are assumed to be integers from 0 up to number of classes."
             assert set(self.labels) == set(range(self.num_classes)), err_message
-            err_message =  "Number of classes should be divisible by the number of tasks."
+            err_message = "Number of classes should be divisible by the number of tasks."
             assert self.num_classes % self.num_tasks == 0, err_message
 
             num_concurrent_labels = self.num_classes // self.num_tasks
 
             for i in range(0, self.num_classes, num_concurrent_labels):
-                concurrent_labels = self.labels[i: i + num_concurrent_labels]
+                concurrent_labels = self.labels[i : i + num_concurrent_labels]
 
                 trainset_filtered_indices = np.where(np.isin(train_targets, concurrent_labels))[0]
                 testset_filtered_indices = np.where(np.isin(test_targets, concurrent_labels))[0]
-                train_ds_subset = torch.utils.data.Subset(self.train_dataset,
-                                                          trainset_filtered_indices)
-                test_ds_subset = torch.utils.data.Subset(self.test_dataset,
-                                                         testset_filtered_indices)
+                train_ds_subset = torch.utils.data.Subset(self.train_dataset, trainset_filtered_indices)
+                test_ds_subset = torch.utils.data.Subset(self.test_dataset, testset_filtered_indices)
                 self.train_task_datasets.append(train_ds_subset)
                 self.test_task_datasets.append(test_ds_subset)
                 self.train_task_datasets_indices_in_orig.append(trainset_filtered_indices)
@@ -428,12 +489,14 @@ class Data:
 
         logging.info("Getting number of train examples per class per train task dataset")
         for idx, ds in enumerate(self.train_task_datasets):
-            #num_examples_per_class_per_ds = [len([1 for i in range(len(ds)) if ds[i][1]==c]) for c in self.labels]
+            # num_examples_per_class_per_ds = [len([1 for i in range(len(ds)) if ds[i][1]==c]) for c in self.labels]
             targets = [ds[i][1] for i in range(len(ds))]
             num_examples_per_class_per_ds = {c: targets.count(c) for c in self.labels}
-            logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
-        
-        with open(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl', 'wb') as file:
+            logging.info(
+                f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}"
+            )
+
+        with open(f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl", "wb") as file:
             pickle.dump(self.train_task_datasets, file)
             pickle.dump(self.test_task_datasets, file)
             pickle.dump(self.train_task_datasets_indices_in_orig, file)
@@ -448,17 +511,17 @@ class Data:
         self.train_loaders, self.test_loaders = [], []
 
         for ds in self.train_task_datasets:
-            self.train_loaders.append(torch.utils.data.DataLoader(ds,
-                                                                  batch_size=self.batch_size,
-                                                                  shuffle=True,
-                                                                  collate_fn=_collate_func,
-                                                                  **self.dataloader_kwargs))
+            self.train_loaders.append(
+                torch.utils.data.DataLoader(
+                    ds, batch_size=self.batch_size, shuffle=True, collate_fn=_collate_func, **self.dataloader_kwargs
+                )
+            )
         for ds in self.test_task_datasets:
-            self.test_loaders.append(torch.utils.data.DataLoader(ds,
-                                                                 batch_size=self.batch_size,
-                                                                 shuffle=True,
-                                                                 collate_fn=_collate_func,
-                                                                 **self.dataloader_kwargs))
+            self.test_loaders.append(
+                torch.utils.data.DataLoader(
+                    ds, batch_size=self.batch_size, shuffle=True, collate_fn=_collate_func, **self.dataloader_kwargs
+                )
+            )
         self.train_loaders = self.train_loaders * self.num_cycles
         self.test_loaders = self.test_loaders * self.num_cycles
 
@@ -477,8 +540,9 @@ class DatasetWIndices(torch.utils.data.Dataset):
 
 class TensorDatasetWTransforms(torch.utils.data.Dataset):
     def __init__(self, images, labels, transform=None):
-        self.tensordataset = torch.utils.data.TensorDataset(torch.from_numpy(images).float(),
-                                                            torch.from_numpy(labels).long())
+        self.tensordataset = torch.utils.data.TensorDataset(
+            torch.from_numpy(images).float(), torch.from_numpy(labels).long()
+        )
         self.transform = transform
 
     def __getitem__(self, index):
