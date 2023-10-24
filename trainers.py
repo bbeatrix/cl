@@ -1,8 +1,6 @@
-import copy
 import logging
 import os
 from abc import abstractmethod
-from copy import deepcopy
 
 import gin
 import gin.torch
@@ -14,8 +12,6 @@ import torch
 import torchvision
 import utils
 import wandb
-from nngeometry.metrics import FIM
-from nngeometry.object import PMatDiag
 from torch.optim.lr_scheduler import MultiStepLR
 
 
@@ -492,36 +488,17 @@ class SupTrainer(Trainer):
 class EWCTrainer(SupTrainer):
     def __init__(self, device, model, data, logdir):
         super().__init__(device, model, data, logdir)
-        import time
 
         self.loss_function = torch.nn.CrossEntropyLoss(reduction="none")
-        self.ewc_loss_weight = 0.5
-        start_time = time.time()
-        self.fisher_diad_approx = self.compute_fisher(self.model)
-        end_time = time.time()
-        print(f"Fisher diagonal approximation computed, took {end_time-start_time}.")
-        print(self.fisher_diad_approx.get_diag().shape)
+        self.ewc_loss_function = losses.EWCLoss(self.device, reduction="none")
         exit()
-
-    def compute_fisher(self, model):
-        fisher_set = deepcopy(self.data.train_dataset)
-        fisher_loader = torch.utils.data.DataLoader(fisher_set, batch_size=128, shuffle=False, num_workers=6)
-
-        fisher_diag = FIM(
-            model=copy.deepcopy(model).eval(),
-            loader=fisher_loader,
-            representation=PMatDiag,
-            n_output=self.data.num_classes[0],
-            variant="classif_logits",
-            device=self.device,
-        )
-        return fisher_diag
 
     def calc_loss_on_batch(self, model_output, target):
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
-        ewc_loss = self.ewc_loss_weight * self.ewc_loss_function(self.model)
-        loss_mean += ewc_loss
+        ewc_loss_per_sample = self.ewc_loss_function(self.data, self.model)
+        ewc_loss_mean = torch.mean(ewc_loss_per_sample)
+        loss_mean += ewc_loss_mean
         return loss_mean
 
 
