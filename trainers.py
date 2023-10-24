@@ -13,7 +13,9 @@ import wandb
 
 import losses, memories
 import utils
-
+from timm.optim import create_optimizer
+from timm.scheduler import create_scheduler
+from convit import ConVit
 
 def trainer_maker(target_type, *args):
     import contrastive_trainers
@@ -35,6 +37,55 @@ def trainer_maker(target_type, *args):
     else:
         raise NotImplementedError
 
+#@gin.configurable(denylist=['task_idx', 'batch_size'])
+def compute_lr(task_idx, batch_size, base_lr=0.0005, incremental_lr=0.0005):
+    if task_idx == 0:
+        return base_lr * batch_size / 512.0
+    else:
+        return incremental_lr * batch_size / 512.0
+
+#@gin.configurable(denylist=['model', 'lr'])
+def make_optimizer(model, lr, optimizer_class='adamw', opt_eps=1e-08, opt_betas=None, clip_grad=None, momentum=0.9, weight_decay=0.000001):
+    class OptimizationConfig:
+        def __init__(self, lr, opt, opt_eps, optim_betas, clip_grad, momentum, weight_decay):
+            self.opt = opt
+            self.opt_eps = opt_eps
+            self.optim_betas = opt_betas
+            self.clip_grad = clip_grad
+            self.momentum = momentum
+            self.weight_decay = weight_decay
+            self.lr = lr
+
+    # Create an instance of the OptimizationConfig class
+    args = OptimizationConfig(
+        lr, optimizer_class, opt_eps, opt_betas, clip_grad, momentum, weight_decay
+    )
+    print("args opt", args.opt)
+    return create_optimizer(args, model) 
+
+def make_lrscheduler(optimizer, num_epochs=500, sched='cosine', lr=0.0005, lr_noise=None, lr_noise_pct=0.67, lr_noise_std=1.0, warmup_lr=1e-06, incremental_warmup_lr=None, min_lr=1e-05, decay_epochs=30, warmup_epochs=5, cooldown_epochs=10, patience_epochs=10, decay_rate=0.1):
+    class SchedulerConfig:
+        def __init__(self, num_epochs, sched, lr, lr_noise, lr_noise_pct, lr_noise_std, warmup_lr, incremental_warmup_lr, min_lr, decay_epochs, warmup_epochs, cooldown_epochs, patience_epochs, decay_rate):
+            self.epochs = num_epochs
+            self.sched = sched
+            self.lr = lr
+            self.lr_noise = lr_noise
+            self.lr_noise_pct = lr_noise_pct
+            self.lr_noise_std = lr_noise_std
+            self.warmup_lr = warmup_lr
+            self.incremental_warmup_lr = incremental_warmup_lr
+            self.min_lr = min_lr
+            self.decay_epochs = decay_epochs
+            self.warmup_epochs = warmup_epochs
+            self.cooldown_epochs = cooldown_epochs
+            self.patience_epochs = patience_epochs
+            self.decay_rate = decay_rate
+
+    args = SchedulerConfig(
+        num_epochs, sched, lr, lr_noise, lr_noise_pct, lr_noise_std, warmup_lr, incremental_warmup_lr, min_lr, decay_epochs, warmup_epochs, cooldown_epochs, patience_epochs, decay_rate
+    )
+    lr_scheduler, _ = create_scheduler(args, optimizer)
+    return lr_scheduler
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class Trainer:
@@ -55,6 +106,8 @@ class Trainer:
         self.test_on_trainsets = test_on_trainsets
         self.test_on_controlgroup = test_on_controlgroup
         self.log_meanfeatdists = log_meanfeatdists
+        self.lr = lr
+        self.wd = wd
         self.optimizer = optimizer(self.model.parameters(),
                                    lr,
                                    weight_decay=wd)
@@ -62,7 +115,11 @@ class Trainer:
         self.lr_scheduler = MultiStepLR(self.optimizer,
                                         milestones=[],
                                         gamma=0.1)
-        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        #self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        self.loss_scaler = utils.ContinualScaler(disable_amp=True)
+        self.is_second_order = hasattr(self.optimizer, 'is_second_order') and self.optimizer.is_second_order
+
+        self.loss_function = losses.bce_with_logits
         self.logdir = logdir
         if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
             os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
@@ -92,6 +149,11 @@ class Trainer:
                 err_message = f"{self.epochs_per_task} * {len(current_train_loader)} should be equal to {self.iters_per_task}"
                 assert (epochs2iters_per_task == self.iters_per_task), err_message
                 self.iters_per_task = epochs2iters_per_task
+
+            self.lr = compute_lr(self.current_task, self.batch_size, self.lr)
+            self.optimizer = make_optimizer(self.model, self.lr)
+            self.lr_scheduler = make_lrscheduler(self.optimizer, lr=self.lr, num_epochs=self.epochs_per_task)
+
             for self.iter_count in range(1, self.iters_per_task + 1):
                 self.model.train()
                 self.global_iters += 1
@@ -144,13 +206,15 @@ class Trainer:
             wandb.log({metric: result for metric, result in results_to_log.items()}, step=self.global_iters)
             results_to_log = None
 
-            self.test(self.test_loaders)
+            self.test(self.test_loaders[:self.current_task + 1])
             if self.test_on_trainsets is True:
                 self.test(self.train_loaders, testing_on_trainsets=True)
         return
 
     def on_epoch_end(self):
-        logging.info(f"Epoch {self.iter_count // len(self.train_loaders[self.current_task])} ended.")
+        epoch_index = self.iter_count // len(self.train_loaders[self.current_task])
+        self.lr_scheduler.step(epoch_index)
+        logging.info(f"Epoch {epoch_index} ended.")
 
     def on_task_end(self):
         logging.info(f"Task {self.current_task + 1} ended.")
@@ -158,13 +222,17 @@ class Trainer:
                          os.path.join(self.logdir,
                                       "model_checkpoints",
                                       f"model_task={self.current_task}_globaliter={self.global_iters}"))
-        self.test(self.test_loaders)
+        self.test(self.test_loaders[:self.current_task + 1])
         if self.test_on_trainsets is True:
             self.test(self.train_loaders, testing_on_trainsets=True)
         self._log_avg_accuracy_and_forgetting()
         
         if self.log_meanfeatdists:
             self._log_meanfeatdists()
+        
+        if isinstance(self.model, ConVit) and self.model.head.nb_classes < self.data.num_classes[0]:
+            logging.info("Adding new classes to the head of the convit model")
+            self.model.head.add_classes()
 
     def test(self, dataset_loaders, testing_on_trainsets=False):
         with torch.no_grad():
@@ -393,9 +461,14 @@ class SupTrainer(Trainer):
     def train_on_batch(self, batch):
         self.optimizer.zero_grad()
         results = self.test_on_batch(batch)
-        results['total_loss_mean'].backward()
-        self.optimizer.step()
-        self.lr_scheduler.step()
+        
+        if self.loss_scaler is not None:
+            self.loss_scaler(results['total_loss_mean'], self.optimizer,self.model, clip_grad=None,
+                        parameters=self.model.parameters(), create_graph=self.is_second_order)
+        else:
+            results['total_loss_mean'].backward()
+            self.optimizer.step()
+        #self.lr_scheduler.step()
         return results
 
 

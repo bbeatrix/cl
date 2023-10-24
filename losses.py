@@ -4,6 +4,15 @@ import gin
 import gin.torch
 from utils import off_diagonal
 
+from torch.nn import functional as F
+
+
+def bce_with_logits(x, y):
+    return F.binary_cross_entropy_with_logits(
+        x,
+        torch.eye(x.shape[1])[y].to(y.device)
+    )
+
 
 @gin.configurable(denylist=['reduction'])
 class SupConLoss(nn.Module):

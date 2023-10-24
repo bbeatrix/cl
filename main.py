@@ -61,7 +61,7 @@ class ExperimentManager():
             logging.info(f"Cached memory: {round(torch.cuda.memory_reserved()/1024**3,1)} GB")
 
         if use_cuda:
-            self.dataloader_kwargs = {'num_workers': 3, 'pin_memory': True}
+            self.dataloader_kwargs = {'num_workers': 10, 'pin_memory': True}
         else:
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
 
@@ -71,7 +71,8 @@ class ExperimentManager():
 
         self.model = models.Model(self.device,
                                   self.data.input_shape,
-                                  self.data.num_classes)
+                                  self.data.num_classes,
+                                  self.data.num_classes_per_task)
 
         self.trainer = trainers.trainer_maker(self.data.target_type,
                                               self.device,
@@ -90,7 +91,7 @@ def main(argv):
 
     os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
     if "WANDB_API_TOKEN" in os.environ:
-        wandb.init(project="cl", entity="bbea")
+        wandb.init(project="clmem_revision", entity="bbea")
         exp_logdir = wandb.run.dir
         exp_prefix = ""
     else:

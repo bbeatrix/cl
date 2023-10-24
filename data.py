@@ -5,6 +5,12 @@ import numpy as np
 import torch
 from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
+import pickle
+import os
+import warnings
+
+from timm.data import create_transform
+from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
 
 @gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
@@ -46,6 +52,7 @@ class Data:
         self.randomsubset_task_datasets = randomsubset_task_datasets
         self.randomsubsets_size = randomsubsets_size
         self.use_testset_for_training = use_testset_for_training
+        self.use_dytox_augmentation = True
 
         self._setup()
 
@@ -57,9 +64,71 @@ class Data:
 
     def _setup(self):
         self._get_dataset()
+        #if os.path.isfile(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl'):
+        #    logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
+        #    with open(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl', 'rb') as f:
+        #        self.train_task_datasets = pickle.load(f)
+        #        self.test_task_datasets = pickle.load(f)
+        #        self.train_task_datasets_indices_in_orig = pickle.load(f)
+        #        self.test_task_datasets_indices_in_orig = pickle.load(f)
+        #    logging.info(f"Successfully loaded {self.dataset_name} {self.num_tasks} data from pickle.")
+        #else:
         self._create_tasks()
         self._create_loaders()
 
+
+    def _build_transform(self, is_train, image_size, dataset_name):
+        with warnings.catch_warnings():
+            try:
+                interpolation = tfs.functional.InterpolationMode.BICUBIC
+            except:
+                interpolation = 3
+            print(interpolation)
+            resize_im = image_size > 32
+            if image_size == 32 and dataset_name == 'cifar100':
+                self.inverse_normalize = tfs.Normalize(mean=(-0.5071/0.2673, -0.4865/0.2564, -0.4409/0.2762),
+                                                       std=[1/0.2673, 1/0.2564, 1/0.2762])
+            else:
+                self.inverse_normalize = tfs.Normalize(mean=(-IMAGENET_DEFAULT_MEAN[0]/IMAGENET_DEFAULT_STD[0], -IMAGENET_DEFAULT_MEAN[1]/IMAGENET_DEFAULT_STD[1], -IMAGENET_DEFAULT_MEAN[2]/IMAGENET_DEFAULT_STD[2]),
+                                                       std=[1/IMAGENET_DEFAULT_STD[0], 1/IMAGENET_DEFAULT_STD[1], 1/IMAGENET_DEFAULT_STD[2]])
+            if is_train:
+                # this should always dispatch to transforms_imagenet_train
+                transform = create_transform(
+                    input_size=image_size,
+                    is_training=True,
+                    color_jitter=0.4,
+                    auto_augment='rand-m9-mstd0.5-inc1',
+                    interpolation='bicubic',
+                    re_prob=0.0,
+                    re_mode='pixel',
+                    re_count=1,
+                )
+                if not resize_im:
+                    # replace RandomResizedCropAndInterpolation with
+                    # RandomCrop
+                    transform.transforms[0] = tfs.RandomCrop(
+                        image_size, padding=4)
+
+                if image_size == 32 and dataset_name == 'cifar100':
+                    transform.transforms[-1] = tfs.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+                return transform
+
+            t = []
+            if resize_im:
+                size = int((256 / 224) * image_size)
+                t.append(
+                    tfs.Resize(size, interpolation=interpolation),  # to maintain same ratio w.r.t. 224 images
+                )
+                t.append(tfs.CenterCrop(image_size))
+
+            t.append(tfs.ToTensor())
+            if image_size == 32 and dataset_name == 'cifar100':
+                # Normalization values for CIFAR100
+                t.append(tfs.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)))
+            else:
+                t.append(tfs.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+
+            return tfs.Compose(t)
 
     def _get_dataset(self):
         logging.info(f"Loading {self.dataset_name} dataset from {self.datadir}.")
@@ -94,6 +163,11 @@ class Data:
         train_transforms = augment_transforms + image_transforms
         test_transforms = image_transforms
 
+        if self.dataset_name in ['cifar100', 'imagenet100'] and self.use_dytox_augmentation:
+            logging.info("Using CIFAR100/Imagenet100 dataset and dytox augmentation!!!!")
+            train_transforms = self._build_transform(is_train=True, image_size=self.image_size, dataset_name=self.dataset_name)
+            test_transforms = self._build_transform(is_train=False, image_size=self.image_size, dataset_name=self.dataset_name)
+
         if self.dataset_name == 'cifar10':
             self.input_shape, self.num_classes = (3, 32, 32), 10
 
@@ -115,21 +189,23 @@ class Data:
         elif self.dataset_name == 'cifar100':
             self.input_shape, self.num_classes = (3, 32, 32), 100
 
-            if self.normalization:
+            if self.normalization and not self.use_dytox_augmentation:
                 train_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
                                                       std=(0.2673, 0.2564, 0.2762)))
                 test_transforms.append(tfs.Normalize(mean=(0.5071, 0.4865, 0.4409),
                                                      std=(0.2673, 0.2564, 0.2762)))
                 self.inverse_normalize = tfs.Normalize(mean=(-0.5071/0.2673, -0.4865/0.2564, -0.4409/0.2762),
                                                        std=[1/0.2673, 1/0.2564, 1/0.2762])
+                train_transforms = tfs.Compose(train_transforms)
+                test_transforms = tfs.Compose(test_transforms)
             self.train_dataset = datasets.CIFAR100(self.datadir,
                                                    train=True,
                                                    download=True,
-                                                   transform=tfs.Compose(train_transforms))
+                                                   transform=train_transforms)
             self.test_dataset = datasets.CIFAR100(self.datadir,
                                                   train=False,
                                                   download=True,
-                                                  transform=tfs.Compose(test_transforms))
+                                                  transform=test_transforms)
         elif self.dataset_name == 'miniimagenet':
             self.input_shape, self.num_classes = (3, 84, 84), 100
 
@@ -298,6 +374,7 @@ class Data:
         self.train_task_datasets, self.test_task_datasets = [], []
         self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
         self.labels = np.array([i for i in range(self.num_classes)])
+        self.num_classes_per_task = self.num_classes // self.num_tasks
 
         if self.num_tasks == 1:
             self.labels = np.array([i for i in range(self.num_classes)])
@@ -355,6 +432,12 @@ class Data:
             targets = [ds[i][1] for i in range(len(ds))]
             num_examples_per_class_per_ds = {c: targets.count(c) for c in self.labels}
             logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
+        
+        with open(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl', 'wb') as file:
+            pickle.dump(self.train_task_datasets, file)
+            pickle.dump(self.test_task_datasets, file)
+            pickle.dump(self.train_task_datasets_indices_in_orig, file)
+            pickle.dump(self.test_task_datasets_indices_in_orig, file)
         return
 
     def _create_loaders(self):

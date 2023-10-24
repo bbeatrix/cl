@@ -14,11 +14,13 @@ from torchsummary import summary
 import torchvision as tv
 import torch.nn as nn
 from torch.nn.functional import relu, avg_pool2d
+from convit import ConVit
+from classifier import Classifier
 
 
-@gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
+@gin.configurable(denylist=['device', 'input_shape', 'output_shape', 'num_classes_per_task'])
 class Model():
-    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
+    def __init__(self, device, input_shape, output_shape, num_classes_per_task, model_path=None, model_class=gin.REQUIRED,
                  pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
         self.device = device
         self.input_shape = input_shape
@@ -30,6 +32,7 @@ class Model():
         self.freeze_top = freeze_top
         self.emb_dim = emb_dim
         self.use_classifier_head = use_classifier_head
+        self.num_classes_per_task = num_classes_per_task
         if self.use_classifier_head is False:
             assert self.emb_dim is not None, "Embedding dim must be specified if classifier head is not used."
 
@@ -44,7 +47,15 @@ class Model():
         self.model.to(self.device)
 
         logging.info("Model summary:\n")
-        summary(self.model, self.input_shape)
+        
+        if self.model_class != convit:
+            summary(self.model, self.input_shape)
+        else:
+            print(self.model)
+            self.model.head=Classifier(self.model.embed_dim, self.num_classes_per_task, self.num_classes_per_task, cosine=False, norm=True)
+            self.model.to(self.device)
+            print(self.model)
+
 
         if self.model_path is not None and os.path.exists(self.model_path):
             self.load()
@@ -284,6 +295,10 @@ def simplecnn(input_shape, output_shape, use_claasifier_head, width=1, use_bias=
 @gin.configurable
 def vit_pretrained(input_shape, output_shape, *args, **kwargs):
     return VisionTransformer(input_shape, output_shape, *args, **kwargs)
+
+@gin.configurable
+def convit(input_shape, output_shape, emb_dim, use_classifier_head, pretrained, freeze_base, freeze_top, *args, **kwargs):
+    return ConVit(input_shape, output_shape, emb_dim, use_classifier_head, pretrained, freeze_base, freeze_top, *args, **kwargs)
 
 
 class VisionTransformer(nn.Module):
