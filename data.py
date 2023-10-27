@@ -50,6 +50,7 @@ class Data:
         randomsubset_task_datasets=False,
         randomsubsets_size=5000,
         use_testset_for_training=False,
+        create_controlgroup=False,
     ):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
@@ -77,6 +78,7 @@ class Data:
         self.randomsubsets_size = randomsubsets_size
         self.use_testset_for_training = use_testset_for_training
         self.use_dytox_augmentation = use_dytox_augmentation
+        self.create_controlgroup = create_controlgroup
 
         self._setup()
 
@@ -86,16 +88,27 @@ class Data:
 
     def _setup(self):
         self._get_dataset()
-        # if os.path.isfile(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl'):
-        #    logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
-        #    with open(f'{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl', 'rb') as f:
-        #        self.train_task_datasets = pickle.load(f)
-        #        self.test_task_datasets = pickle.load(f)
-        #        self.train_task_datasets_indices_in_orig = pickle.load(f)
-        #        self.test_task_datasets_indices_in_orig = pickle.load(f)
-        #    logging.info(f"Successfully loaded {self.dataset_name} {self.num_tasks} data from pickle.")
-        # else:
-        self._create_tasks()
+        if os.path.isfile(
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl"
+        ):
+            logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
+            with open(
+                f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+                "rb",
+            ) as f:
+                self.train_task_datasets = pickle.load(f)
+                self.test_task_datasets = pickle.load(f)
+                self.train_task_datasets_indices_in_orig = pickle.load(f)
+                self.test_task_datasets_indices_in_orig = pickle.load(f)
+                self.labels = pickle.load(f)
+                self.num_classes_per_task = pickle.load(f)
+                num_tasks = pickle.load(f)
+                assert (
+                    num_tasks == self.num_tasks
+                ), "Number of tasks in pickle file is not equal to the number of tasks."
+            logging.info(f"Successfully loaded {self.dataset_name} {self.num_tasks} data from pickle.")
+        else:
+            self._create_tasks()
         self._create_loaders()
 
     def _build_transform(self, is_train, image_size, dataset_name):
@@ -232,8 +245,8 @@ class Data:
             self.input_shape, self.num_classes = (3, 224, 224), 100
 
             # insert resize transform at the beginning of both train and test transforms
-            train_transforms.insert(0, tfs.Resize(self.image_size))
-            test_transforms.insert(0, tfs.Resize(self.image_size))
+            train_transforms.transforms.insert(0, tfs.Resize(self.image_size))
+            test_transforms.transforms.insert(0, tfs.Resize(self.image_size))
 
             print(train_transforms)
             print(test_transforms)
@@ -247,8 +260,12 @@ class Data:
                 )
                 train_transforms = tfs.Compose(train_transforms)
                 test_transforms = tfs.Compose(test_transforms)
-            self.train_dataset = datasets.ImageFolder(self.datadir + "/imagenet100_train", transform=train_transforms)
-            self.test_dataset = datasets.ImageFolder(self.datadir + "/imagenet100_val", transform=test_transforms)
+            self.train_dataset = datasets.ImageFolder(
+                self.datadir + "/imagenet100/imagenet100_train", transform=train_transforms
+            )
+            self.test_dataset = datasets.ImageFolder(
+                self.datadir + "/imagenet100/imagenet100_validation", transform=test_transforms
+            )
         elif self.dataset_name == "miniimagenet":
             self.input_shape, self.num_classes = (3, 84, 84), 100
 
@@ -314,43 +331,44 @@ class Data:
                 f"Successfully concatenated train and test sets, new size of train set is: {len(self.train_dataset)}"
             )
 
-        self.control_group = {"unforgettables": {}, "low_forgettables": {}, "high_forgettables": {}}
-        precomputed_fscores_with_labels = np.load(
-            f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy"
-        )
+        if self.create_controlgroup:
+            self.control_group = {"unforgettables": {}, "low_forgettables": {}, "high_forgettables": {}}
+            precomputed_fscores_with_labels = np.load(
+                f"./data/{self.dataset_name}_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy"
+            )
 
-        for c in range(self.num_classes):
-            class_indices = np.where(precomputed_fscores_with_labels[1] == c)[0]
-            class_scores = precomputed_fscores_with_labels[0][class_indices]
-            unforgettables_indices = np.where(class_scores == 0)[0][:3]
-            forgettables_indices = np.where(class_scores > 0)[0]
-            sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
-            low_forgettables_indices = sorted_forgettables_indices[:3]
-            high_forgettables_indices = sorted_forgettables_indices[-3:]
+            for c in range(self.num_classes):
+                class_indices = np.where(precomputed_fscores_with_labels[1] == c)[0]
+                class_scores = precomputed_fscores_with_labels[0][class_indices]
+                unforgettables_indices = np.where(class_scores == 0)[0][:3]
+                forgettables_indices = np.where(class_scores > 0)[0]
+                sorted_forgettables_indices = np.argsort(class_scores[forgettables_indices])
+                low_forgettables_indices = sorted_forgettables_indices[:3]
+                high_forgettables_indices = sorted_forgettables_indices[-3:]
 
-            self.control_group["unforgettables"][c] = [
-                self.train_dataset[i] for i in class_indices[unforgettables_indices]
-            ]
-            self.control_group["low_forgettables"][c] = [
-                self.train_dataset[i] for i in class_indices[low_forgettables_indices]
-            ]
-            self.control_group["high_forgettables"][c] = [
-                self.train_dataset[i] for i in class_indices[high_forgettables_indices]
-            ]
+                self.control_group["unforgettables"][c] = [
+                    self.train_dataset[i] for i in class_indices[unforgettables_indices]
+                ]
+                self.control_group["low_forgettables"][c] = [
+                    self.train_dataset[i] for i in class_indices[low_forgettables_indices]
+                ]
+                self.control_group["high_forgettables"][c] = [
+                    self.train_dataset[i] for i in class_indices[high_forgettables_indices]
+                ]
 
-        self.images_per_targets = {}
-        train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
-        for c in range(0, self.num_classes):
-            trainset_filtered_indices = np.where(train_targets == c)[0]
-            class_images = [self.train_dataset[i] for i in trainset_filtered_indices]
-            self.images_per_targets[c] = torch.stack([class_images[i][0] for i in range(len(class_images))])
-        self.full_trainset_loader = torch.utils.data.DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            collate_fn=default_collate,
-            **self.dataloader_kwargs,
-        )
+            self.images_per_targets = {}
+            train_targets = np.array([self.train_dataset[i][1] for i in range(len(self.train_dataset))])
+            for c in range(0, self.num_classes):
+                trainset_filtered_indices = np.where(train_targets == c)[0]
+                class_images = [self.train_dataset[i] for i in trainset_filtered_indices]
+                self.images_per_targets[c] = torch.stack([class_images[i][0] for i in range(len(class_images))])
+            self.full_trainset_loader = torch.utils.data.DataLoader(
+                self.train_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                collate_fn=default_collate,
+                **self.dataloader_kwargs,
+            )
 
     def _create_randomsubset_task_datasets(self):
         logging.info(f"Creating random subsets of size {self.randomsubsets_size} from each training dataset.")
@@ -449,8 +467,11 @@ class Data:
         elif self.num_tasks > 1 and self.tasks_split_type in ["cl", "cl_forgetstatbased"]:
             logging.info(f"Splitting training and test datasets into {self.num_tasks} parts for cl.")
             train_targets = [self.train_dataset[i][1] for i in range(len(self.train_dataset))]
+            logging.info(f"Number of train targets: {len(train_targets)}")
             test_targets = [self.test_dataset[i][1] for i in range(len(self.test_dataset))]
+            logging.info(f"Number of test targets: {len(test_targets)}")
             self.labels = np.unique(train_targets)
+            logging.info(f"Number of classes: {len(self.labels)}")
 
             err_message = "Targets are assumed to be integers from 0 up to number of classes."
             assert set(self.labels) == set(range(self.num_classes)), err_message
@@ -460,12 +481,16 @@ class Data:
             num_concurrent_labels = self.num_classes // self.num_tasks
 
             for i in range(0, self.num_classes, num_concurrent_labels):
+                logging.info(f"Creating {i//num_concurrent_labels + 1}. task.")
                 concurrent_labels = self.labels[i : i + num_concurrent_labels]
 
                 trainset_filtered_indices = np.where(np.isin(train_targets, concurrent_labels))[0]
                 testset_filtered_indices = np.where(np.isin(test_targets, concurrent_labels))[0]
                 train_ds_subset = torch.utils.data.Subset(self.train_dataset, trainset_filtered_indices)
                 test_ds_subset = torch.utils.data.Subset(self.test_dataset, testset_filtered_indices)
+                logging.info(
+                    f"Number of train examples in {i//num_concurrent_labels + 1}. task: {len(train_ds_subset)}"
+                )
                 self.train_task_datasets.append(train_ds_subset)
                 self.test_task_datasets.append(test_ds_subset)
                 self.train_task_datasets_indices_in_orig.append(trainset_filtered_indices)
@@ -496,14 +521,22 @@ class Data:
                 f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}"
             )
 
-        with open(f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_data.pkl", "wb") as file:
+        with open(
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+            "wb",
+        ) as file:
             pickle.dump(self.train_task_datasets, file)
             pickle.dump(self.test_task_datasets, file)
             pickle.dump(self.train_task_datasets_indices_in_orig, file)
             pickle.dump(self.test_task_datasets_indices_in_orig, file)
+            pickle.dump(self.labels, file)
+            pickle.dump(self.num_classes_per_task, file)
+            pickle.dump(self.num_tasks, file)
         return
 
     def _create_loaders(self):
+        logging.info("Creating train and test data loaders.")
+        logging.info(f"num classes {self.num_classes}")
         self.num_classes = (self.num_classes,)
         _collate_func = default_collate
 
@@ -522,6 +555,7 @@ class Data:
                     ds, batch_size=self.batch_size, shuffle=True, collate_fn=_collate_func, **self.dataloader_kwargs
                 )
             )
+
         self.train_loaders = self.train_loaders * self.num_cycles
         self.test_loaders = self.test_loaders * self.num_cycles
 
