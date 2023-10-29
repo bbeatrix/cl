@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 
 class Classifier(nn.Module):
-    def __init__(self, embed_dim, nb_base_classes, increment, cosine=False, norm=True):
+    def __init__(self, embed_dim, nb_base_classes, increment, cosine=False, norm=True, head_expansion=False):
         super().__init__()
 
         self.embed_dim = embed_dim
@@ -18,6 +18,7 @@ class Classifier(nn.Module):
         self.head = nn.Linear(embed_dim, nb_base_classes, bias=not cosine)
         self.norm = nn.LayerNorm(embed_dim) if norm else nn.Identitty()
         self.increment = increment
+        self.head_expansion = head_expansion
 
     def reset_parameters(self):
         self.head.reset_parameters()
@@ -60,6 +61,7 @@ class Classifier(nn.Module):
         w[-nb_new_classes:] = gamma * w[-nb_new_classes:]
 
     def add_classes(self):
+        print("Head expansion is enabled: ", self.head_expansion)
         self.add_new_outputs(self.increment)
 
     def add_new_outputs(self, n):

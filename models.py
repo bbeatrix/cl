@@ -1,27 +1,25 @@
-from collections import OrderedDict
-from functools import partial
 import logging
 import os
+from collections import OrderedDict
+from functools import partial
 
-from absl import app
 import gin
 import timm
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchsummary import summary
 import torchvision as tv
-import torch.nn as nn
-from torch.nn.functional import relu, avg_pool2d
-from convit import ConVit
+from absl import app
 from classifier import Classifier
+from convit import ConVit
+from torch.nn.functional import avg_pool2d, relu
+from torchsummary import summary
 
 
 @gin.configurable(denylist=['device', 'input_shape', 'output_shape', 'num_classes_per_task'])
 class Model():
     def __init__(self, device, input_shape, output_shape, num_classes_per_task, model_path=None, model_class=gin.REQUIRED,
-                 pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
+                 pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False, head_expansion=False):
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape
@@ -33,6 +31,7 @@ class Model():
         self.emb_dim = emb_dim
         self.use_classifier_head = use_classifier_head
         self.num_classes_per_task = num_classes_per_task
+        self.head_expansion = head_expansion
         if self.use_classifier_head is False:
             assert self.emb_dim is not None, "Embedding dim must be specified if classifier head is not used."
 
@@ -52,7 +51,10 @@ class Model():
             summary(self.model, self.input_shape)
         else:
             print(self.model)
-            self.model.head=Classifier(self.model.embed_dim, self.num_classes_per_task, self.num_classes_per_task, cosine=False, norm=True)
+            if self.head_expansion:
+                self.model.head=Classifier(self.model.embed_dim, self.num_classes_per_task, self.num_classes_per_task, cosine=False, norm=True, head_expansion=self.head_expansion)
+            else:
+                self.model.head=Classifier(self.model.embed_dim, self.output_shape[0], self.output_shape[0], cosine=False, norm=True, head_expansion=self.head_expansion)
             self.model.to(self.device)
             print(self.model)
 

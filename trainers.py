@@ -322,10 +322,11 @@ class Trainer:
         logging.info(f"self.model.head.nb_classes: {self.model.head.nb_classes}")
         logging.info(f"self.data.num_classes[0]: {self.data.num_classes[0]}")
         logging.info(f"is convit model {isinstance(self.model, ConVit)}")
+        logging.info(f"head expansion: ", self.model.head.head_expansion)
         logging.info(
             f"self.model.head.nb_classes < self.data.num_classes[0]: {self.model.head.nb_classes < self.data.num_classes[0]}"
         )
-        if isinstance(self.model, ConVit) and self.model.head.nb_classes < self.data.num_classes[0]:
+        if isinstance(self.model, ConVit) and self.model.head.nb_classes < self.data.num_classes[0] and self.model.head.head_expansion:
             logging.info("Adding new classes to the head of the convit model")
             self.model.head.add_classes()
         logging.info(f"on task end finished")
