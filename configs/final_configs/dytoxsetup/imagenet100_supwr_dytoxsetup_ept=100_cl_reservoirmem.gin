@@ -1,0 +1,43 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'imagenet100'
+Data.target_type = 'supervised with replay'
+Data.image_size = 224
+Data.batch_size = 128 # 64
+Data.use_dytox_augmentation = True
+Data.augment = True
+Data.simple_augmentation = True
+Data.normalization = True
+Data.num_tasks = 10
+Data.num_cycles = 1
+
+Model.model_class = @models.convit # @models.resnet
+Model.use_classifier_head = True
+Model.head_expansion = True
+ConVit.patch_size = 16
+ConVit.embed_dim = 384
+ConVit.num_heads = 12
+ConVit.depth = 6
+ConVit.drop_rate = 0.0
+ConVit.drop_path_rate = 0.1
+ConVit.norm_layer = 'layer'
+ConVit.local_up_to_layer = 5
+ConVit.locality_strength = 1.0
+ConVit.class_attention = True
+
+Trainer.iters = 102000
+Trainer.epochs_per_task = 100
+
+Trainer.lr = 0.0005
+Trainer.wd = 0.000001
+Trainer.optimizer = @torch.optim.AdamW
+#torch.optim.AdamW.weight_decay = 0.000001
+
+Trainer.log_interval = 100
+
+SupTrainerWReplay.use_replay = True
+SupTrainerWReplay.memory_type = "reservoir" 
+SupTrainerWReplay.replay_batch_size = 128 # 64
+SupTrainerWReplay.replay_memory_size = 2000
+
