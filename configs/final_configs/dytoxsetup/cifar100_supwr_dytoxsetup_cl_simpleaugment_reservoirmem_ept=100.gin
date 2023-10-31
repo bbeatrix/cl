@@ -7,7 +7,6 @@ Data.image_size = 32
 Data.batch_size = 128 # 64
 Data.augment = True
 Data.simple_augmentation = True
-Data.use_dytox_augmentation = True
 Data.normalization = True
 Data.num_tasks = 10
 Data.num_cycles = 1

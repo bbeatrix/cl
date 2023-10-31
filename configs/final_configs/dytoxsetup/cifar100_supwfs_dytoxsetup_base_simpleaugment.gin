@@ -2,14 +2,14 @@ ExperimentManager.seed = 1
 ExperimentManager.logdir = './outputs'
 
 Data.dataset_name = 'cifar100'
-Data.target_type = 'supervised with replay'
+Data.target_type = 'supervised with forgetstats'
 Data.image_size = 32
 Data.batch_size = 128 # 64
 Data.augment = True
 Data.simple_augmentation = True
-Data.use_dytox_augmentation = True
+Data.use_dytox_augmentation = False
 Data.normalization = True
-Data.num_tasks = 10
+Data.num_tasks = 1
 Data.num_cycles = 1
 
 Model.model_class = @models.convit # @models.resnet
@@ -25,8 +25,8 @@ ConVit.local_up_to_layer = 5
 ConVit.locality_strength = 1.0
 ConVit.class_attention = True
 
-Trainer.iters = 40000 # 20000 # 4000 # -> 79 * 500 * 10 = 395000 ? 
-Trainer.epochs_per_task = 100#500 # 10 #-> 500
+Trainer.iters = 195500
+Trainer.epochs_per_task = 500
 
 Trainer.lr = 0.0005
 Trainer.wd = 0.000001
@@ -34,9 +34,3 @@ Trainer.optimizer = @torch.optim.AdamW
 #torch.optim.AdamW.weight_decay = 0.000001
 
 Trainer.log_interval = 1000
-
-SupTrainerWReplay.use_replay = True
-SupTrainerWReplay.memory_type = "reservoir" 
-SupTrainerWReplay.replay_batch_size = 128 # 64
-SupTrainerWReplay.replay_memory_size = 2000
-
