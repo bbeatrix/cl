@@ -245,8 +245,14 @@ class Data:
             self.input_shape, self.num_classes = (3, 224, 224), 100
 
             # insert resize transform at the beginning of both train and test transforms
-            train_transforms.transforms.insert(0, tfs.Resize(self.image_size))
-            test_transforms.transforms.insert(0, tfs.Resize(self.image_size))
+            # check if train_transforms is list
+            if isinstance(train_transforms, list):
+                train_transforms.insert(0, tfs.Resize(self.image_size))
+                test_transforms.insert(0, tfs.Resize(self.image_size))
+            else:
+                assert isinstance(train_transforms, tfs.Compose) == True, "train_transforms should be a compose object"
+                train_transforms.transforms.insert(0, tfs.Resize(self.image_size))
+                test_transforms.transforms.insert(0, tfs.Resize(self.image_size))
 
             print(train_transforms)
             print(test_transforms)
