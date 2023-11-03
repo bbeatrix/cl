@@ -160,6 +160,7 @@ class Trainer:
         wd=gin.REQUIRED,
         optimizer=gin.REQUIRED,
         lr_scheduler=MultiStepLR,
+        use_dytox_optimization=False,
         test_on_trainsets=False,
         test_on_controlgroup=False,
         log_meanfeatdists=False,
@@ -181,13 +182,17 @@ class Trainer:
         self.lr = lr
         self.wd = wd
         self.optimizer = optimizer(self.model.parameters(), lr, weight_decay=wd)
+        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        self.loss_scaler = None
+        self.lr_scheduler = None
+        self.use_dytox_optimization = use_dytox_optimization
 
-        self.lr_scheduler = MultiStepLR(self.optimizer, milestones=[], gamma=0.1)
-        # self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
-        self.loss_scaler = utils.ContinualScaler(disable_amp=True)
-        self.is_second_order = hasattr(self.optimizer, "is_second_order") and self.optimizer.is_second_order
+        if self.use_dytox_optimization:
+            self.loss_function = losses.bce_with_logits
+            self.loss_scaler = utils.ContinualScaler(disable_amp=True)
+            self.lr_scheduler = MultiStepLR(self.optimizer, milestones=[], gamma=0.1)
+            self.is_second_order = hasattr(self.optimizer, "is_second_order") and self.optimizer.is_second_order
 
-        self.loss_function = losses.bce_with_logits
         self.logdir = logdir
         if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
             os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
@@ -225,9 +230,11 @@ class Trainer:
                 assert epochs2iters_per_task == self.iters_per_task, err_message
                 self.iters_per_task = epochs2iters_per_task
 
-            self.lr = compute_lr(self.current_task, self.batch_size, self.lr)
-            self.optimizer = make_optimizer(self.model, self.lr)
             self.lr_scheduler = make_lrscheduler(self.optimizer, lr=self.lr, num_epochs=self.epochs_per_task)
+            if self.use_dytox_optimization:
+                self.lr = compute_lr(self.current_task, self.batch_size, self.lr)
+                self.optimizer = make_optimizer(self.model, self.lr)
+                self.lr_scheduler = make_lrscheduler(self.optimizer, lr=self.lr, num_epochs=self.epochs_per_task)
 
             for self.iter_count in range(1, self.iters_per_task + 1):
                 logging.info(f"Global iter: {self.global_iters}, batch: {self.iter_count}/{self.iters_per_task}")
@@ -297,7 +304,8 @@ class Trainer:
 
     def on_epoch_end(self):
         epoch_index = self.iter_count // len(self.train_loaders[self.current_task])
-        self.lr_scheduler.step(epoch_index)
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step(epoch_index)
         logging.info(f"Epoch {epoch_index} ended.")
 
     def on_task_end(self):
@@ -799,26 +807,28 @@ class SupTrainerWForgetStats(SupTrainer):
         return
 
     def _log_scores_hist(self, globalscores, score_type="forget", bins=20):
-        scores = globalscores.copy()
-        if sum(np.isinf(scores)) > 0:
-            scores[scores == np.inf] = -1
-        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-        axs.hist(scores, bins=bins)
-        plt.title(f"{score_type} scores at {self.global_iters} steps, task {self.current_task}")
-        plt.xlabel(f"{self.all_scores_descriptions[score_type]}")
-        plt.ylabel("Count of training samples")
-        wandb.log({f"{score_type} scores histogram": wandb.Image(fig)}, step=self.global_iters)
-        plt.close()
-        return
+        if score_type ["forget", "softforget"]:
+            scores = globalscores.copy()
+            if sum(np.isinf(scores)) > 0:
+                scores[scores == np.inf] = -1
+            fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+            axs.hist(scores, bins=bins)
+            plt.title(f"{score_type} scores at {self.global_iters} steps, task {self.current_task}")
+            plt.xlabel(f"{self.all_scores_descriptions[score_type]}")
+            plt.ylabel("Count of training samples")
+            wandb.log({f"{score_type} scores histogram": wandb.Image(fig)}, step=self.global_iters)
+            plt.close()
+            return
 
     def _save_scores(self, score_type, scores):
-        save_path = os.path.join(
-            self.logdir,
-            "all_scores",
-            f"{score_type}_scores",
-            f"{score_type}scores_task={self.current_task}_globaliter={self.global_iters}.npy",
-        )
-        np.save(save_path, scores)
+        if score_type in ["forget", "softforget"]:
+            save_path = os.path.join(
+                self.logdir,
+                "all_scores",
+                f"{score_type}_scores",
+                f"{score_type}scores_task={self.current_task}_globaliter={self.global_iters}.npy",
+            )
+            np.save(save_path, scores)
 
 
 @gin.configurable(denylist=["device", "model", "data", "logdir"])

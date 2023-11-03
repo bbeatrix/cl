@@ -1,0 +1,37 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'cifar100'
+Data.target_type = 'supervised with forgetstats'
+Data.image_size = 32
+Data.batch_size = 128 # 64
+Data.augment = True
+Data.simple_augmentation = True
+Data.normalization = True
+Data.num_tasks = 1
+Data.num_cycles = 1
+
+Model.model_class = @models.convit # @models.resnet
+Model.use_classifier_head = True
+ConVit.patch_size = 4
+ConVit.embed_dim = 384
+ConVit.num_heads = 12
+ConVit.depth = 6
+ConVit.drop_rate = 0.0
+ConVit.drop_path_rate = 0.1
+ConVit.norm_layer = 'layer'
+ConVit.local_up_to_layer = 5
+ConVit.locality_strength = 1.0
+ConVit.class_attention = True
+
+Trainer.iters = 195500
+Trainer.epochs_per_task = 500
+
+Trainer.use_dytox_optimization = False
+Trainer.lr = 0.1
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+
+torch.optim.SGD.momentum = 0.9
+torch.optim.SGD.nesterov = True
