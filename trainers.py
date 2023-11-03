@@ -230,7 +230,6 @@ class Trainer:
                 assert epochs2iters_per_task == self.iters_per_task, err_message
                 self.iters_per_task = epochs2iters_per_task
 
-            self.lr_scheduler = make_lrscheduler(self.optimizer, lr=self.lr, num_epochs=self.epochs_per_task)
             if self.use_dytox_optimization:
                 self.lr = compute_lr(self.current_task, self.batch_size, self.lr)
                 self.optimizer = make_optimizer(self.model, self.lr)
