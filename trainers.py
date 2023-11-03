@@ -807,7 +807,7 @@ class SupTrainerWForgetStats(SupTrainer):
         return
 
     def _log_scores_hist(self, globalscores, score_type="forget", bins=20):
-        if score_type ["forget", "softforget"]:
+        if score_type in ["forget", "softforget"]:
             scores = globalscores.copy()
             if sum(np.isinf(scores)) > 0:
                 scores[scores == np.inf] = -1
