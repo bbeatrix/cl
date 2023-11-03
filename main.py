@@ -14,7 +14,7 @@ import torch
 import trainers
 import wandb
 from absl import app, flags
-from utils import gin_config_to_dict
+from utils import gin_config_to_dict, set_memory_limit
 
 
 @gin.configurable
@@ -114,6 +114,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    set_memory_limit(50)
     flags.DEFINE_multi_string("gin_file", None, "List of paths to the config files.")
     flags.DEFINE_multi_string("gin_param", None, "Newline separated list of Gin param bindings.")
     FLAGS = flags.FLAGS
