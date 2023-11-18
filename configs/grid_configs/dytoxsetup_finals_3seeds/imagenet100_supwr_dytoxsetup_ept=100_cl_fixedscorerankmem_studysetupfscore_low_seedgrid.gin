@@ -1,4 +1,7 @@
-ExperimentManager.seed = 1
+descartes_builder.name = 'imagenet100_supwr_dytoxsetup_ept=100_cl_fixedscorerankmem_studysetupfscore_low_seedgrid'
+descartes_builder.params = ['ExperimentManager.seed']
+
+ExperimentManager.seed = [0, 2, 3]
 ExperimentManager.logdir = './outputs'
 
 Data.dataset_name = 'imagenet100'

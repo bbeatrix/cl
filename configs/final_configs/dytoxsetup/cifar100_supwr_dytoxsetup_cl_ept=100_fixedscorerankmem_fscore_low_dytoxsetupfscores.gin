@@ -31,6 +31,7 @@ Trainer.epochs_per_task = 100#500 # 10 #-> 500
 Trainer.lr = 0.0005
 Trainer.wd = 0.000001
 Trainer.optimizer = @torch.optim.AdamW
+Trainer.use_dytox_optimization = True
 #torch.optim.AdamW.weight_decay = 0.000001
 
 Trainer.log_interval = 1000
