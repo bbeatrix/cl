@@ -58,6 +58,12 @@ class Model():
             self.model.to(self.device)
             print(self.model)
 
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        non_trainable_params = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)
+        all_params = sum(p.numel() for p in self.model.parameters())
+        print("Trainable parameters count: ", trainable_params)
+        print("Non-trainable parameters count: ", non_trainable_params)
+        print("All params count: ", all_params)
 
         if self.model_path is not None and os.path.exists(self.model_path):
             self.load()

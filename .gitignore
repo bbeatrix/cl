@@ -5,3 +5,4 @@ outputs/
 configs/grids
 models/
 data/
+wandb/
