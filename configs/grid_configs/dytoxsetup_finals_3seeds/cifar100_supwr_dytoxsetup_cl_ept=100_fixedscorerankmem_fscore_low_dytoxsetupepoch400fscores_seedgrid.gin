@@ -1,4 +1,4 @@
-descartes_builder.name = 'cifar100_supwr_dytoxsetup_cl_ept=100_fixedscorerankmem_fscore_low_dytoxsetupfscores_seedgrid'
+descartes_builder.name = 'cifar100_supwr_dytoxsetup_cl_ept=100_fixedscorerankmem_fscore_low_dytoxsetupepoch400fscores_seedgrid'
 descartes_builder.params = ['ExperimentManager.seed']
 
 ExperimentManager.seed = [0, 2, 3]
