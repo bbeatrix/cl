@@ -628,12 +628,12 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
                 device=self.device,
                 size_limit=self.replay_memory_size,
             )
-        elif self.memory_type == "fixedscorerank":
+        elif self.memory_type == "precomputedscorerank":
             err_message = "Parameter value must be set in config file"
             assert (self.precomputed_scores_path is not None) == True, err_message
             assert (self.score_type  in ["forget", "consistency"]) == True, err_message
             assert (self.score_order in ["low", "high", "caws", "unforgettables"]) == True, err_message
-            self.replay_memory = memories.FixedScoresRankMemory(
+            self.replay_memory = memories.PrecomputedScoresRankMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
@@ -646,45 +646,12 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
             )
             if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
                 os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
-        elif self.memory_type == "scorerank":
-            err_message = "Parameter value must be set in config file"
-            assert (self.precomputed_scores_path is not None) == True, err_message
-            assert (self.score_type  in ["forget", "consistency"]) == True, err_message
-            assert (self.score_order in ["low", "high"]) == True, err_message
-            self.replay_memory = memories.PrecomputedScoresRankMemory(
-                image_shape=self.data.input_shape,
-                target_shape=(1,),
-                device=self.device,
-                size_limit=self.replay_memory_size,
-                precomputed_scores_path=self.precomputed_scores_path,
-                score_order=self.score_order,
-            )
-            if not os.path.isdir(os.path.join(self.logdir, "memory_content_scores")):
-                os.makedirs(os.path.join(self.logdir, "memory_content_scores"))
-        elif self.memory_type == "forgettables":
-            err_message = "Parameter value must be set in config file"
-            assert (self.score_order in ["low", "high", "best"]) == True, err_message
-            assert (self.update_content_scores in [True, False]) == True, err_message
-            assert (self.check_containing in [True, False]) == True, err_message
-            self.replay_memory = memories.ForgettablesMemory(
-                image_shape=self.data.input_shape,
-                target_shape=(1,),
-                device=self.device,
-                size_limit=self.replay_memory_size,
-                score_order=self.score_order,
-                update_content_scores=self.update_content_scores,
-                check_containing=self.check_containing,
-                num_train_examples=len(self.data.train_dataset),
-                logdir=self.logdir
-            )
-            if not os.path.isdir(os.path.join(self.logdir, "memory_content_forget_scores")):
-                os.makedirs(os.path.join(self.logdir, "memory_content_forget_scores"))
-        elif self.memory_type == "fixedunforgettables":
+        elif self.memory_type == "leastforgettables":
             err_message = "Parameter value must be set in config file"
             assert (self.score_order in ["low", "high", "unforgettables"]) == True, err_message
             assert (self.update_content_scores in [True, False]) == True, err_message
             assert (self.check_containing in [True, False]) == True, err_message
-            self.replay_memory = memories.FixedUnforgettablesMemory(
+            self.replay_memory = memories.LeastForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,

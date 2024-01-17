@@ -14,7 +14,7 @@ from trainers import Trainer, SupTrainer
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupContrastiveTrainer(SupTrainer):
     CONTRAST_TYPES = ['simple', 'with_replay']
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables"]
+    MEMORY_TYPES = ["fixed", "reservoir", "leastforgettables"]
 
     def __init__(self, device, model, data, logdir, contrast_type=gin.REQUIRED, separate_memories=False,
                  prototype_memory_size=1000, replay_memory_size=None, replay_batch_size=None,
@@ -76,8 +76,8 @@ class SupContrastiveTrainer(SupTrainer):
                 size_limit=self.replay_memory_size,
                 size_limit_per_target=self.replay_memory_size_per_target
             )
-        elif self.replay_memory_type == "forgettables":
-            memory = memories.ForgettablesMemory(
+        elif self.replay_memory_type == "leastforgettables":
+            memory = memories.LeastForgettablesMemory(
                 image_shape=self.data.input_shape,
                 target_shape=(1,),
                 device=self.device,
