@@ -683,22 +683,26 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
         input_images_combined = input_images
         target_combined = target
 
-        if self.use_replay and not self.replay_memory.empty():
+        trainbatch_grad_norm, replaybatch_grad_norm = None, None
+        if self.use_replay and not self.replay_memory.empty() and self.model.training:
             replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
             input_images_combined = torch.cat([input_images, replay_images], dim=0)
             replay_target = replay_target.squeeze(dim=-1)
             target_combined = torch.cat([target, replay_target], dim=0)
+            # print(target.dtype, replay_target.dtype)
+            trainbatch_grad_norm = self._get_batch_grad_norm(input_images, target)
+            replaybatch_grad_norm = self._get_batch_grad_norm(replay_images, replay_target.to(dtype=torch.long))
 
         model_output = self.model(input_images_combined)
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
-        return loss_mean
+        return loss_mean, trainbatch_grad_norm, replaybatch_grad_norm
 
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        loss_mean = self.calc_loss_on_batch(input_images, target)
+        loss_mean, trainbatch_grad_norm, replaybatch_grad_norm = self.calc_loss_on_batch(input_images, target)
 
         model_output = self.model(input_images)
         predictions = torch.argmax(model_output, dim=1)
@@ -713,7 +717,9 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
                    'accuracy': accuracy_mean,
                    'corrects': corrects,
                    'softmax_preds': softmax_preds,
-                   'pred_scores': pred_scores}
+                   'pred_scores': pred_scores,
+                   'train_batch_grad_norm': trainbatch_grad_norm,
+                   'replay_batch_grad_norm': replaybatch_grad_norm}
         return results
 
     def _test_on_memcontent(self, mem_content):
@@ -764,9 +770,55 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
         plt.close()
         return
 
+    def _get_batch_grad_norm(self, input_images, target):
+        from torch.func import functional_call, vmap, grad, jacrev
+
+        self.model.eval() # because batchnorm
+        params = {k: v.detach() for k, v in self.model.named_parameters()}
+        buffers = {k: v.detach() for k, v in self.model.named_buffers()}
+
+        def model_output(params, buffers, sample, target):
+            # no batch dim yet
+            batch = sample.unsqueeze(0)
+            targets = target.unsqueeze(0)
+
+            output = functional_call(self.model, (params, buffers), (batch,))
+            # collect outputs at correct target index
+            target_output = torch.gather(output, 1, targets.view(-1, 1))
+            return target_output.squeeze()
+
+        def flatten_grads(grad_dict):
+            # flatten all but batch dim, concat grads
+            flattened_grads = np.concatenate([grad.cpu().numpy().reshape(grad.shape[0], -1) for grad in grad_dict.values()], axis=1)
+            return flattened_grads
+
+        ft_compute_grad = grad(model_output)
+        ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, 0, 0), randomness="different")
+
+        ft_per_sample_grads_dict = ft_compute_sample_grad(params, buffers, input_images, target)
+        ft_per_sample_grads_flattened = flatten_grads(ft_per_sample_grads_dict)
+
+        #print("first grad shape: ", list(ft_per_sample_grads_dict.values())[0].shape)
+        #print("per_sample_grads: \n", ft_per_sample_grads_dict)
+        #print("per_sample_grads length: \n", len(ft_per_sample_grads_dict))
+        #print("per_sample_grads type: \n", type(ft_per_sample_grads_dict))
+        #print("per_sample_grads keys: \n", list(ft_per_sample_grads_dict.keys()))
+        #print("per_sample_grads shape: \n", ft_per_sample_grads_flattened.shape)
+        #print("per_sample_grads norms: \n", np.linalg.norm(ft_per_sample_grads_flattened, ord=2, axis=1))
+
+        ft_per_sample_grad_norms = np.linalg.norm(ft_per_sample_grads_flattened, ord=2, axis=1)
+        batch_grad_norm = np.sum(ft_per_sample_grad_norms)
+        #print(batch_grad_norm)
+        self.model.train()
+
+        return batch_grad_norm
+
     def on_iter_end(self, batch, batch_results):
         is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
+            if not self.replay_memory.empty():
+                wandb.log({"train batch grad norm": batch_results["trainbatch_grad_norm"], "replay batch grad norm": batch_results["replaybatch_grad_norm"], }, step=self.global_iters)
+            logging.info("grad norm logged successfully")
             wandb.log({"count memory content update": self.replay_memory.count_content_update}, step=self.global_iters)
             if not self.replay_memory.empty():
                 self._log_replay_memory_images()
