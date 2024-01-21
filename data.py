@@ -2,6 +2,8 @@ import logging
 import gin
 import gin.torch
 import numpy as np
+import os
+import pickle
 import torch
 from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
@@ -57,7 +59,27 @@ class Data:
 
     def _setup(self):
         self._get_dataset()
-        self._create_tasks()
+        if os.path.isfile(
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl"
+        ):
+            logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
+            with open(
+                f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+                "rb",
+            ) as f:
+                self.train_task_datasets = pickle.load(f)
+                self.test_task_datasets = pickle.load(f)
+                self.train_task_datasets_indices_in_orig = pickle.load(f)
+                self.test_task_datasets_indices_in_orig = pickle.load(f)
+                self.labels = pickle.load(f)
+                self.num_classes_per_task = pickle.load(f)
+                num_tasks = pickle.load(f)
+                assert (
+                    num_tasks == self.num_tasks
+                ), "Number of tasks in pickle file is not equal to the number of tasks."
+            logging.info(f"Successfully loaded {self.dataset_name} {self.num_tasks} data from pickle.")
+        else:
+            self._create_tasks()
         self._create_loaders()
 
 
@@ -301,6 +323,7 @@ class Data:
         self.train_task_datasets, self.test_task_datasets = [], []
         self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
         self.labels = np.array([i for i in range(self.num_classes)])
+        self.num_classes_per_task = self.num_classes // self.num_tasks
 
         if self.num_tasks == 1:
             self.labels = np.array([i for i in range(self.num_classes)])
@@ -358,6 +381,17 @@ class Data:
             targets = [ds[i][1] for i in range(len(ds))]
             num_examples_per_class_per_ds = {c: targets.count(c) for c in self.labels}
             logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
+        with open(
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+            "wb",
+        ) as file:
+            pickle.dump(self.train_task_datasets, file)
+            pickle.dump(self.test_task_datasets, file)
+            pickle.dump(self.train_task_datasets_indices_in_orig, file)
+            pickle.dump(self.test_task_datasets_indices_in_orig, file)
+            pickle.dump(self.labels, file)
+            pickle.dump(self.num_classes_per_task, file)
+            pickle.dump(self.num_tasks, file)
         return
 
     def _create_loaders(self):
