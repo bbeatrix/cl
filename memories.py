@@ -139,7 +139,7 @@ class PrecomputedScoresRankMemory(FixedMemory):
         self.selected_indices_per_class = {}
 
     def _update_content_at_idx(self, update_image, update_target, update_index_in_ds, idx):
-        super(FixedScoresRankMemory, self)._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
+        super(PrecomputedScoresRankMemory, self)._update_content_at_idx(update_image, update_target, update_index_in_ds, idx)
         self.content["scores"][idx] = self.precomputed_scores[update_index_in_ds]
 
     def _select_indices_per_target(self, target):
@@ -276,7 +276,7 @@ class LeastForgettablesMemory(Memory):
         self.target2indices[old_target].remove(idx)
 
     def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, forget_score):
-        super(FixedUnforgettablesMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
+        super(LeastForgettablesMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
         self.content["forget_scores"][idx] = forget_score
 
     def get_index_of_replace(self):
@@ -348,7 +348,7 @@ def test():
     IMAGE_SHAPE=(1,)
     TARGET_SHAPE=(1,)
     device="cuda"
-    memory = FixedUnforgettablesMemory(
+    memory = LeastForgettablesMemory(
         image_shape=IMAGE_SHAPE,
         target_shape=TARGET_SHAPE,
         device=device,
