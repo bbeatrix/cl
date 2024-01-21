@@ -1,12 +1,14 @@
 from abc import abstractmethod
 import logging
 import os
+import time
 
 import gin
 import gin.torch
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.func import functional_call, vmap, grad, jacrev
 from torch.optim.lr_scheduler import MultiStepLR
 import torchvision
 import wandb
@@ -93,6 +95,7 @@ class Trainer:
                 assert (epochs2iters_per_task == self.iters_per_task), err_message
                 self.iters_per_task = epochs2iters_per_task
             for self.iter_count in range(1, self.iters_per_task + 1):
+                logging.info(f"Task {self.current_task + 1}x{self.num_cycles}x{self.num_tasks}, iter {self.iter_count}/{self.iters_per_task}")
                 self.model.train()
                 self.global_iters += 1
                 if self.iter_count == self.iters_per_task:
@@ -118,13 +121,13 @@ class Trainer:
         is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
 
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
-            self._log_train_images(batch)
+            #self._log_train_images(batch)
 
-            if self.logdir is not None:
-                utils.save_image(batch[0][:self.batch_size, :, :, :],
-                                 name='train_images',
-                                 iteration=self.global_iters,
-                                 filename=os.path.join(self.logdir, 'train_images.png'))
+            #if self.logdir is not None:
+            #    utils.save_image(batch[0][:self.batch_size, :, :, :],
+            #                     name='train_images',
+            #                     iteration=self.global_iters,
+            #                     filename=os.path.join(self.logdir, 'train_images.png'))
 
             wandb.log({'learning_rate': self.optimizer.param_groups[0]['lr']}, step=self.global_iters)
 
@@ -154,10 +157,10 @@ class Trainer:
 
     def on_task_end(self):
         logging.info(f"Task {self.current_task + 1} ended.")
-        utils.save_model(self.model,
-                         os.path.join(self.logdir,
-                                      "model_checkpoints",
-                                      f"model_task={self.current_task}_globaliter={self.global_iters}"))
+        #utils.save_model(self.model,
+        #                 os.path.join(self.logdir,
+        #                              "model_checkpoints",
+        #                              f"model_task={self.current_task}_globaliter={self.global_iters}"))
         self.test(self.test_loaders)
         if self.test_on_trainsets is True:
             self.test(self.train_loaders, testing_on_trainsets=True)
@@ -259,7 +262,15 @@ class Trainer:
             save_path = os.path.join(self.logdir,
                                     "task_accuracies",
                                     f"task_accuracies_after_task={self.current_task}_globaliter={self.global_iters}.txt")
-            np.savetxt(save_path, np.array([np.array(v) for v in self.task_accuracies.values()]), delimiter=', ', fmt='%s')
+            #np.savetxt(save_path, np.array([np.array(v) for v in self.task_accuracies.values()]), delimiter=', ', fmt='%s')
+
+            max_length = max(len(sublist) for sublist in self.task_accuracies.values())
+
+            accuracies_array = np.full((len(self.task_accuracies), max_length), np.nan)
+            for key, subarrays in self.task_accuracies.items():
+                for i, subarray in enumerate(subarrays):
+                    accuracies_array[key, i] = subarray
+            np.savetxt(save_path, np.array(accuracies_array), delimiter=", ", fmt="%s")
         return
 
     def _log_controlgroup_predictions(self):
@@ -578,8 +589,9 @@ class SupTrainerWForgetStats(SupTrainer):
 
 
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
-class SupTrainerWReplay(SupTrainerWForgetStats):
-    MEMORY_TYPES = ["fixed", "reservoir", "forgettables", "scorerank", "fixedscorerank", "fixedunforgettables"]
+class SupTrainerWReplay(SupTrainer):
+#class SupTrainerWReplay(SupTrainerWForgetStats):
+    MEMORY_TYPES = ["fixed", "reservoir", "precomputedscorerank", "leastforgettables"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -679,30 +691,96 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
             os.makedirs(os.path.join(self.logdir, "memory_content_update_indices"))
         return
 
+    def flatten_grads(self, grad_dict):
+        # flatten all but batch dim, concat grads
+        flattened_grads = torch.cat([grad.reshape(grad.shape[0], -1) for grad in grad_dict.values()], axis=1)
+        return flattened_grads
+
     def calc_loss_on_batch(self, input_images, target):
         input_images_combined = input_images
         target_combined = target
 
-        trainbatch_grad_norm, replaybatch_grad_norm = None, None
+        #if self.use_replay and not self.replay_memory.empty() and self.model.training:
+        def model_output_func(params, buffers, sample, target):
+            # no batch dim yet
+            batch = sample.unsqueeze(0)
+            targets = target.unsqueeze(0)
+
+            output = functional_call(self.model, (params, buffers), (batch,))
+            # collect outputs at correct target index
+            target_output = torch.gather(output, 1, targets.view(-1, 1))
+            return target_output.squeeze()
+        
+        def loss_func(params, buffers, sample, target):
+            # no batch dim yet
+            batch = sample.unsqueeze(0)
+            targets = target.unsqueeze(0)
+
+            predictions = functional_call(self.model, (params, buffers), (batch,))
+            loss_per_sample = self.loss_function(predictions, targets)
+            return loss_per_sample.mean()
+
         if self.use_replay and not self.replay_memory.empty() and self.model.training:
             replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
-            input_images_combined = torch.cat([input_images, replay_images], dim=0)
-            replay_target = replay_target.squeeze(dim=-1)
-            target_combined = torch.cat([target, replay_target], dim=0)
-            # print(target.dtype, replay_target.dtype)
-            trainbatch_grad_norm = self._get_batch_grad_norm(input_images, target)
-            replaybatch_grad_norm = self._get_batch_grad_norm(replay_images, replay_target.to(dtype=torch.long))
+            
+            replay_target = replay_target.squeeze(dim=-1).to(dtype=torch.long)
+            if self.current_task > 0:
+                input_images_combined = torch.cat([input_images, replay_images], dim=0)
+                target_combined = torch.cat([target, replay_target], dim=0)
+
+            trainbatch_out_mean_grad_norm, trainbatch_out_grad_norm_mean, trainbatch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
+            replaybatch_out_mean_grad_norm, replaybatch_out_grad_norm_mean, replaybatch_out_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, model_output_func)
+
+            trainbatch_loss_mean_grad_norm, trainbatch_loss_grad_norm_mean, trainbatch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
+            replaybatch_loss_mean_grad_norm, replaybatch_loss_grad_norm_mean, replaybatch_loss_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, loss_func)
+
+            wandb.log({"grads/train batch out mean grad norm": trainbatch_out_mean_grad_norm, 
+                       "grads/train batch out grad norm mean": trainbatch_out_grad_norm_mean,
+                       "grads/train batch out grad norm std": trainbatch_out_grad_norm_std,
+                       "grads/replay batch out mean grad norm": replaybatch_out_mean_grad_norm,
+                       "grads/replay batch out grad norm mean": replaybatch_out_grad_norm_mean,
+                       "grads/replay batch out grad norm std": replaybatch_out_grad_norm_std,
+                       "grads/train batch loss mean grad norm": trainbatch_loss_mean_grad_norm,
+                       "grads/train batch loss grad norm mean": trainbatch_loss_grad_norm_mean,
+                       "grads/train batch loss grad norm std": trainbatch_loss_grad_norm_std,
+                       "grads/replay batch loss mean grad norm": replaybatch_loss_mean_grad_norm,
+                       "grads/replay batch loss grad norm mean": replaybatch_loss_grad_norm_mean,
+                       "grads/replay batch loss grad norm std": replaybatch_loss_grad_norm_std},
+                       step=self.global_iters)
+            logging.info(f"output and loss grad stats logged")
+
+        # if self.use_replay and not self.replay_memory.empty() and self.model.training:
+        #    trainbatch_output, replaybatch_output = torch.split(model_output, [input_images.shape[0], replay_images.shape[0]], dim=0)
+        #    train_loss_per_sample = self.loss_function(trainbatch_output, target)
+        #    replay_loss_per_sample = self.loss_function(replaybatch_output, replay_target)
+        #    trainbatch_loss_grad = torch.autograd.grad(train_loss_per_sample.mean(), self.model.parameters(), retain_graph=True)
+        #    replaybatch_loss_grad = torch.autograd.grad(replay_loss_per_sample.mean(), self.model.parameters(), retain_graph=True)
+
+        #    trainbatch_loss_grad_norm = torch.norm(torch.cat([grad.contiguous().view(-1) for grad in trainbatch_loss_grad]), p=2).cpu().numpy()
+        #    replaybatch_loss_grad_norm = torch.norm(torch.cat([grad.contiguous().view(-1) for grad in replaybatch_loss_grad]), p=2).cpu().numpy()
 
         model_output = self.model(input_images_combined)
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
-        return loss_mean, trainbatch_grad_norm, replaybatch_grad_norm
+
+        if self.use_replay and not self.replay_memory.empty() and self.model.training:
+            trainbatch_loss_mean = torch.mean(loss_per_sample[:input_images.shape[0]])
+            replaybatch_loss_mean = torch.mean(loss_per_sample[input_images.shape[0]:])
+            wandb.log({"train batch loss mean": trainbatch_loss_mean, 
+                       "replay batch loss mean": replaybatch_loss_mean,
+                       "train batch size": input_images.shape[0],
+                       "replay batch size": replay_images.shape[0],
+                       "replayed images count": input_images_combined.shape[0] - input_images.shape[0]},
+                       step=self.global_iters)
+            logging.info(f"train and replay batch loss means logged")
+            logging.info(f"loss mean: {loss_mean}, trainbatch_loss_mean: {trainbatch_loss_mean}, replaybatch_loss_mean: {replaybatch_loss_mean}")
+        return loss_mean
 
     def test_on_batch(self, batch):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        loss_mean, trainbatch_grad_norm, replaybatch_grad_norm = self.calc_loss_on_batch(input_images, target)
+        loss_mean = self.calc_loss_on_batch(input_images, target)
 
         model_output = self.model(input_images)
         predictions = torch.argmax(model_output, dim=1)
@@ -711,15 +789,15 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
 
         softmax_output = torch.nn.functional.softmax(model_output, dim=-1).detach()
         softmax_preds = softmax_output.gather(1, target.unsqueeze(dim=1)).squeeze().cpu().numpy()
-        pred_scores = self._calculate_predscores_on_batch(target, softmax_output, softmax_preds, predictions)
+        #pred_scores = self._calculate_predscores_on_batch(target, softmax_output, softmax_preds, predictions)
+        pred_scores = None
 
         results = {'total_loss_mean': loss_mean,
                    'accuracy': accuracy_mean,
                    'corrects': corrects,
                    'softmax_preds': softmax_preds,
-                   'pred_scores': pred_scores,
-                   'train_batch_grad_norm': trainbatch_grad_norm,
-                   'replay_batch_grad_norm': replaybatch_grad_norm}
+                   # 'pred_scores': pred_scores,
+                   }
         return results
 
     def _test_on_memcontent(self, mem_content):
@@ -747,93 +825,76 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
         return
 
     def _log_replay_memory_images(self):
-        replay_images, replay_target = self.replay_memory.get_samples(max(self.replay_memory_size, 500))
-        replay_images = self.data.inverse_normalize(replay_images.detach().cpu())
-        fig = plt.figure(figsize = (20, 40))
-        image_grid = torchvision.utils.make_grid(replay_images)
-        ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
-        plt.axis('off')
-        fig = plt.gcf()
-        wandb.log({"replay memory content": fig}, step=self.global_iters)
-        plt.close()
         return
+        #replay_images, replay_target = self.replay_memory.get_samples(max(self.replay_memory_size, 500))
+        #replay_images = self.data.inverse_normalize(replay_images.detach().cpu())
+        #fig = plt.figure(figsize = (20, 40))
+        #image_grid = torchvision.utils.make_grid(replay_images)
+        #ax = plt.imshow(np.transpose(image_grid, (1, 2, 0)))
+        #plt.axis('off')
+        #fig = plt.gcf()
+        #wandb.log({"replay memory content": fig}, step=self.global_iters)
+        #plt.close()
+        #return
 
     def _log_replay_memory_class_distribution(self):
-        fig = plt.figure(figsize = (10, 5))
-        classes = list(self.replay_memory.target2indices.keys())
-        counts = [len(indices) for indices in self.replay_memory.target2indices.values()]
-        plt.bar(classes, counts, color ='maroon', width=0.2)
-        plt.xlabel("Classes in memory")
-        plt.ylabel("Number of images")
-        plt.title("Class distribution of images in replay memory")
-        wandb.log({"replay memory class distribution": wandb.Image(fig)}, step=self.global_iters)
-        plt.close()
         return
+        #fig = plt.figure(figsize = (10, 5))
+        #classes = list(self.replay_memory.target2indices.keys())
+        #counts = [len(indices) for indices in self.replay_memory.target2indices.values()]
+        #plt.bar(classes, counts, color ='maroon', width=0.2)
+        #plt.xlabel("Classes in memory")
+        #plt.ylabel("Number of images")
+        #plt.title("Class distribution of images in replay memory")
+        #wandb.log({"replay memory class distribution": wandb.Image(fig)}, step=self.global_iters)
+        #plt.close()
+        #return
 
-    def _get_batch_grad_norm(self, input_images, target):
-        from torch.func import functional_call, vmap, grad, jacrev
-
+    def _get_batch_grad_stats(self, input_images, target, function):
+        startt = time.time()
         self.model.eval() # because batchnorm
         params = {k: v.detach() for k, v in self.model.named_parameters()}
         buffers = {k: v.detach() for k, v in self.model.named_buffers()}
 
-        def model_output(params, buffers, sample, target):
-            # no batch dim yet
-            batch = sample.unsqueeze(0)
-            targets = target.unsqueeze(0)
-
-            output = functional_call(self.model, (params, buffers), (batch,))
-            # collect outputs at correct target index
-            target_output = torch.gather(output, 1, targets.view(-1, 1))
-            return target_output.squeeze()
-
-        def flatten_grads(grad_dict):
-            # flatten all but batch dim, concat grads
-            flattened_grads = np.concatenate([grad.cpu().numpy().reshape(grad.shape[0], -1) for grad in grad_dict.values()], axis=1)
-            return flattened_grads
-
-        ft_compute_grad = grad(model_output)
+        ft_compute_grad = grad(function)
         ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, 0, 0), randomness="different")
 
         ft_per_sample_grads_dict = ft_compute_sample_grad(params, buffers, input_images, target)
-        ft_per_sample_grads_flattened = flatten_grads(ft_per_sample_grads_dict)
+        ft_per_sample_grads_flattened = self.flatten_grads(ft_per_sample_grads_dict)
 
-        #print("first grad shape: ", list(ft_per_sample_grads_dict.values())[0].shape)
-        #print("per_sample_grads: \n", ft_per_sample_grads_dict)
-        #print("per_sample_grads length: \n", len(ft_per_sample_grads_dict))
-        #print("per_sample_grads type: \n", type(ft_per_sample_grads_dict))
-        #print("per_sample_grads keys: \n", list(ft_per_sample_grads_dict.keys()))
-        #print("per_sample_grads shape: \n", ft_per_sample_grads_flattened.shape)
-        #print("per_sample_grads norms: \n", np.linalg.norm(ft_per_sample_grads_flattened, ord=2, axis=1))
+        batch_mean_grad = torch.mean(ft_per_sample_grads_flattened, axis=0)
+        batch_mean_grad_norm = torch.linalg.norm(batch_mean_grad, ord=2)
 
-        ft_per_sample_grad_norms = np.linalg.norm(ft_per_sample_grads_flattened, ord=2, axis=1)
-        batch_grad_norm = np.sum(ft_per_sample_grad_norms)
-        #print(batch_grad_norm)
+        per_sample_grad_norms = torch.linalg.norm(ft_per_sample_grads_flattened, ord=2, axis=1)
+        batch_grad_norm_mean = torch.mean(per_sample_grad_norms, axis=0)
+        batch_grad_norm_std = torch.std(per_sample_grad_norms, axis=0)
+
         self.model.train()
+        endt = time.time()
+        logging.info(f"time elapsed for batch {function.__name__.replace('_func', '')} grad stats compute: {endt - startt} seconds")
 
-        return batch_grad_norm
-
+        return batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
+    
     def on_iter_end(self, batch, batch_results):
         is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
-            if not self.replay_memory.empty():
-                wandb.log({"train batch grad norm": batch_results["trainbatch_grad_norm"], "replay batch grad norm": batch_results["replaybatch_grad_norm"], }, step=self.global_iters)
-            logging.info("grad norm logged successfully")
+
             wandb.log({"count memory content update": self.replay_memory.count_content_update}, step=self.global_iters)
             if not self.replay_memory.empty():
-                self._log_replay_memory_images()
-                self._log_replay_memory_class_distribution()
+                #self._log_replay_memory_images()
+                #self._log_replay_memory_class_distribution()
                 if self.test_on_memcontent:
                     self._test_on_memcontent(self.replay_memory.content)
             else:
                 logging.info("Replay memory is currently empty.")
-            if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
-                self._log_scores_hist(self.replay_memory.precomputed_scores,
-                                      f"precomputed {self.score_type} scores histogram",
-                                      score_type=self.score_type)
-                self._log_scores_hist(self.replay_memory.content["scores"],
-                                      f"memory content precomputed {self.score_type} scores histogram",
-                                      score_type=self.score_type)
+            if self.memory_type == "precomputedscorerank":
+                logging.info("Logging scorerank memory content happens here.")
+                #self._log_scores_hist(self.replay_memory.precomputed_scores,
+                #                      f"precomputed {self.score_type} scores histogram",
+                #                      score_type=self.score_type)
+                # self._log_scores_hist(self.replay_memory.content["scores"],
+                #                      f"memory content precomputed {self.score_type} scores histogram",
+                #                      score_type=self.score_type)
                 fs_dict = {"memory content size": len(self.replay_memory.content["indices_in_ds"]),
                            "memory content score min": min(self.replay_memory.content["scores"]),
                            "memory content score max": max(self.replay_memory.content["scores"]),
@@ -841,15 +902,16 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
                            "global score max": max(self.replay_memory.precomputed_scores)}
                 wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
 
-            elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
-                self._log_scores_hist(self.replay_memory.global_forget_scores,
-                                      "forget scores histogram")
+            elif self.memory_type == "leastforgettables":
+                logging.info("Logging leastforgettables memory content happens here.")
+                #self._log_scores_hist(self.replay_memory.global_forget_scores,
+                #                      "forget scores histogram")
 
-                self._log_scores_hist(self.replay_memory.content["forget_scores"],
-                                      "memory content forget scores histogram")
+                #self._log_scores_hist(self.replay_memory.content["forget_scores"],
+                #                      "memory content forget scores histogram")
 
-                self._log_scores_hist(self.replay_memory.forget_stats["num_softforgets"],
-                                      "soft forget scores histogram")
+                #self._log_scores_hist(self.replay_memory.forget_stats["num_softforgets"],
+                #                      "soft forget scores histogram")
 
                 fs_dict = {"count prev_corrects": sum(self.replay_memory.forget_stats["prev_corrects"]),
                            "count corrects": sum(batch_results["corrects"]),
@@ -861,41 +923,43 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
                            "global score min": min(self.replay_memory.global_forget_scores),
                            "global score max": max(self.replay_memory.global_forget_scores)}
                 wandb.log({k: v for k, v in fs_dict.items()}, step=self.global_iters)
-            if is_task_start_or_end_iter and not self.replay_memory.empty():
-                save_path = os.path.join(self.logdir,
-                                        "memory_content_idxinds",
-                                        f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
-                existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
-                np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%1.0f')
-                save_path = os.path.join(self.logdir,
-                                        "memory_content_update_indices",
-                                        f"memory_content_update_indices_task={self.current_task}_globaliter={self.global_iters}.txt")
-                np.savetxt(save_path, np.array(self.replay_memory.content_update_indices), delimiter=', ', fmt='%1.0f')
+            if False and is_task_start_or_end_iter and not self.replay_memory.empty():
+                logging.info("Logging memory content happens here.")
+                #save_path = os.path.join(self.logdir,
+                #                        "memory_content_idxinds",
+                #                        f"memory_idxinds_task={self.current_task}_globaliter={self.global_iters}.txt")
+                #existing_indices = np.array([i for i in self.replay_memory.content["indices_in_ds"] if i is not None])
+                #np.savetxt(save_path, existing_indices, delimiter=', ', fmt='%1.0f')
+                #save_path = os.path.join(self.logdir,
+                #                        "memory_content_update_indices",
+                #                        f"memory_content_update_indices_task={self.current_task}_globaliter={self.global_iters}.txt")
+                #np.savetxt(save_path, np.array(self.replay_memory.content_update_indices), delimiter=', ', fmt='%1.0f')
 
-                if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
-                    save_path = os.path.join(self.logdir,
-                                            "memory_content_scores",
-                                            f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%1.3f')
+                #if self.memory_type == "scorerank" or self.memory_type == "fixedscorerank":
+                #    save_path = os.path.join(self.logdir,
+                #                            "memory_content_scores",
+                #                            f"memory_scores_task={self.current_task}_globaliter={self.global_iters}.txt")
+                #    np.savetxt(save_path, self.replay_memory.content["scores"], delimiter=', ', fmt='%1.3f')
 
-                elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
-                    save_path = os.path.join(self.logdir,
-                                            "memory_content_forget_scores",
-                                            f"memory_fs_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%1.0f')
-                    save_path = os.path.join(self.logdir,
-                                            "global_forget_scores",
-                                            f"global_fs_task={self.current_task}_globaliter={self.global_iters}.npy")
-                    np.save(save_path, self.replay_memory.global_forget_scores)
-                if self.memory_type == "fixedunforgettables":
-                    save_path = os.path.join(self.logdir,
-                                            "first_learn_iters",
-                                            f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
-                    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
+                #elif self.memory_type == "forgettables" or self.memory_type == "fixedunforgettables":
+                #    save_path = os.path.join(self.logdir,
+                #                            "memory_content_forget_scores",
+                #                            f"memory_fs_task={self.current_task}_globaliter={self.global_iters}.txt")
+                #    np.savetxt(save_path, self.replay_memory.content["forget_scores"], delimiter=', ', fmt='%1.0f')
+                #    save_path = os.path.join(self.logdir,
+                #                            "global_forget_scores",
+                #                            f"global_fs_task={self.current_task}_globaliter={self.global_iters}.npy")
+                #    np.save(save_path, self.replay_memory.global_forget_scores)
+                #if self.memory_type == "fixedunforgettables":
+                #    save_path = os.path.join(self.logdir,
+                #                            "first_learn_iters",
+                #                            f"first_learn_iters_task={self.current_task}_globaliter={self.global_iters}.txt")
+                #    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
             self.replay_memory.on_batch_end(*batch, batch_results["corrects"], batch_results["softmax_preds"], self.global_iters)
-            if self.memory_type == "fixedunforgettables":
+            if  False and self.memory_type == "fixedunforgettables":
+                logging.info("Logging forget stats happens here.")
                 count_first_learns = len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])
                 wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
                 fs_dict = {"forgetstats/num forgets in iter": self.replay_memory.num_forgets_in_iter,
@@ -906,14 +970,15 @@ class SupTrainerWReplay(SupTrainerWForgetStats):
         return
 
     def _log_scores_hist(self, scores_input, log_name, score_type="forget", bins=20):
-        scores = scores_input.copy()
-        if sum(np.isinf(scores)) > 0:
-            scores[scores == np.inf] = -1
-        fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
-        axs.hist(scores, bins=bins)
-        plt.title(f"{score_type.capitalize()} scores at {self.global_iters} steps, task {self.current_task}")
-        plt.xlabel(f"{score_type.capitalize()} score values")
-        plt.ylabel("Number of training examples")
-        wandb.log({log_name: wandb.Image(fig)}, step=self.global_iters)
-        plt.close()
         return
+        #scores = scores_input.copy()
+        #if sum(np.isinf(scores)) > 0:
+        #    scores[scores == np.inf] = -1
+        #fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
+        #axs.hist(scores, bins=bins)
+        #plt.title(f"{score_type.capitalize()} scores at {self.global_iters} steps, task {self.current_task}")
+        #plt.xlabel(f"{score_type.capitalize()} score values")
+        #plt.ylabel("Number of training examples")
+        #wandb.log({log_name: wandb.Image(fig)}, step=self.global_iters)
+        #plt.close()
+        #return
