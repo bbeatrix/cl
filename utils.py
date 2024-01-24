@@ -34,6 +34,8 @@ def save_model(model, model_path):
     torch.save(model.state_dict(), save_path)
     logging.info(f"Saved model to {save_path}.")
 
+def get_model_trainable_params(model):
+    return torch.cat([param.clone().detach().view(-1) for param in model.parameters() if param.requires_grad])
 
 def off_diagonal(x):
     # return a flattened view of the off-diagonal elements of a square matrix
