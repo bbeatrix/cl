@@ -42,3 +42,9 @@ def off_diagonal(x):
     n, m = x.shape
     assert n == m
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+def add_wandb_log_prefixes(results_to_log_dict):
+    new = {("loss/" + key) if "loss" in key else ("accuracy/" + key) if "accuracy" in key else key: value
+            for key, value in results_to_log_dict.items()}
+    print(new)
+    return new

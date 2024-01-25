@@ -145,6 +145,7 @@ class Trainer:
                                          self.iters_per_task,
                                          *[item.data for item in results_to_log.values()]))
 
+            results_to_log = utils.add_wandb_log_prefixes(results_to_log)
             wandb.log({metric: result for metric, result in results_to_log.items()}, step=self.global_iters)
             results_to_log = None
 
@@ -207,6 +208,7 @@ class Trainer:
                                              float(self.global_iters) / self.iters * 100.,
                                              *[item.data for item in test_results.values()]))
 
+                test_results = utils.add_wandb_log_prefixes(test_results)
                 wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
         return
 
@@ -713,9 +715,9 @@ class SupTrainerWReplay(SupTrainer):
             else:
                 replaybatch_output = self.model(replay_images).detach().clone()
                 replaybatch_computed_loss_mean = torch.mean(self.loss_function(replaybatch_output, replay_target))
-                wandb.log({"unused replay batch loss mean": replaybatch_computed_loss_mean}, step=self.global_iters)
+                wandb.log({"loss/unused replay batch loss mean": replaybatch_computed_loss_mean}, step=self.global_iters)
 
-            #self._log_batch_grad_stats(input_images, target, replay_images, replay_target)
+            self._log_batch_grad_stats(input_images, target, replay_images, replay_target)
 
         model_output = self.model(input_images_combined)
         loss_per_sample = self.loss_function(model_output, target_combined)
@@ -726,13 +728,13 @@ class SupTrainerWReplay(SupTrainer):
             if self.current_task > 0:
                 replaybatch_output = model_output[input_images.shape[0]:].detach().clone()
                 
-            #self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), replaybatch_output, target, replay_target)
+            self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), replaybatch_output, target, replay_target)
             trainbatch_loss_mean = torch.mean(loss_per_sample[:input_images.shape[0]]).detach().clone()
             replaybatch_loss_mean = torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()
 
             wandb.log({
-                "train batch loss mean": trainbatch_loss_mean, 
-                "replay batch loss mean": replaybatch_loss_mean,
+                "loss/train batch loss mean": trainbatch_loss_mean,
+                "loss/replay batch loss mean": replaybatch_loss_mean,
                 "train batch size": input_images.shape[0],
                 "replay batch size": replay_images.shape[0],
                 "replayed images count": input_images_combined.shape[0] - input_images.shape[0]},
@@ -786,8 +788,8 @@ class SupTrainerWReplay(SupTrainer):
                                         float(self.global_iters) / self.iters * 100.,
                                         *[item.data for item in test_results.values()]))
 
-            for metric, result in test_results.items():
-                wandb.log({metric: result}, step=self.global_iters)
+            test_results = utils.add_wandb_log_prefixes(test_results)
+            wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
         return
 
     def _log_replay_memory_images(self):
@@ -836,11 +838,13 @@ class SupTrainerWReplay(SupTrainer):
         batch_grad_norm_mean = torch.mean(per_sample_grad_norms, axis=0)
         batch_grad_norm_std = torch.std(per_sample_grad_norms, axis=0)
 
+        batch_sum_grad_norm = torch.linalg.norm(torch.sum(ft_per_sample_grads_flattened, axis=0), ord=2)
+
         self.model.train()
         endt = time.time()
         logging.info(f"time elapsed for batch {function.__name__.replace('_func', '')} grad stats compute: {endt - startt} seconds")
 
-        return batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
+        return batch_sum_grad_norm, batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
 
     def _log_batch_grad_stats(self, input_images, target, replay_images, replay_target):
         startt = time.time()
@@ -866,29 +870,32 @@ class SupTrainerWReplay(SupTrainer):
             loss_per_sample = self.loss_function(predictions, targets)
             return loss_per_sample.mean()
 
-        if self.use_replay and not self.replay_memory.empty() and self.model.training:
-            # log grad stats - this seems to be working fine
-            trainbatch_out_mean_grad_norm, trainbatch_out_grad_norm_mean, trainbatch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
-            replaybatch_out_mean_grad_norm, replaybatch_out_grad_norm_mean, replaybatch_out_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, model_output_func)
+        trainbatch_out_sum_grad_norm, trainbatch_out_mean_grad_norm, trainbatch_out_grad_norm_mean, trainbatch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
+        replaybatch_out_sum_grad_norm, replaybatch_out_mean_grad_norm, replaybatch_out_grad_norm_mean, replaybatch_out_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, model_output_func)
 
-            trainbatch_loss_mean_grad_norm, trainbatch_loss_grad_norm_mean, trainbatch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
-            replaybatch_loss_mean_grad_norm, replaybatch_loss_grad_norm_mean, replaybatch_loss_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, loss_func)
+        trainbatch_loss_sum_grad_norm, trainbatch_loss_mean_grad_norm, trainbatch_loss_grad_norm_mean, trainbatch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
+        replaybatch_loss_sum_grad_norm, replaybatch_loss_mean_grad_norm, replaybatch_loss_grad_norm_mean, replaybatch_loss_grad_norm_std = self._get_batch_grad_stats(replay_images, replay_target, loss_func)
 
-            wandb.log({"grads/train batch out mean grad norm": trainbatch_out_mean_grad_norm, 
-                    "grads/train batch out grad norm mean": trainbatch_out_grad_norm_mean,
-                    "grads/train batch out grad norm std": trainbatch_out_grad_norm_std,
-                    "grads/replay batch out mean grad norm": replaybatch_out_mean_grad_norm,
-                    "grads/replay batch out grad norm mean": replaybatch_out_grad_norm_mean,
-                    "grads/replay batch out grad norm std": replaybatch_out_grad_norm_std,
-                    "grads/train batch loss mean grad norm": trainbatch_loss_mean_grad_norm,
-                    "grads/train batch loss grad norm mean": trainbatch_loss_grad_norm_mean,
-                    "grads/train batch loss grad norm std": trainbatch_loss_grad_norm_std,
-                    "grads/replay batch loss mean grad norm": replaybatch_loss_mean_grad_norm,
-                    "grads/replay batch loss grad norm mean": replaybatch_loss_grad_norm_mean,
-                    "grads/replay batch loss grad norm std": replaybatch_loss_grad_norm_std},
-                    step=self.global_iters)
-            logging.info(f"output and loss grad stats logged")
+        wandb.log({"fgrad/train batch out mean grad norm": trainbatch_out_mean_grad_norm,
+                "fgrad/train batch out sum grad norm": trainbatch_out_sum_grad_norm,
+                "fgrad/train batch out grad norm mean": trainbatch_out_grad_norm_mean,
+                "fgrad/train batch out grad norm std": trainbatch_out_grad_norm_std,
+                "fgrad/replay batch out sum grad norm": replaybatch_out_sum_grad_norm,
+                "fgrad/replay batch out mean grad norm": replaybatch_out_mean_grad_norm,
+                "fgrad/replay batch out grad norm mean": replaybatch_out_grad_norm_mean,
+                "fgrad/replay batch out grad norm std": replaybatch_out_grad_norm_std,
+                "lossgrad/train batch loss sum grad norm": trainbatch_loss_sum_grad_norm,
+                "lossgrad/train batch loss mean grad norm": trainbatch_loss_mean_grad_norm,
+                "lossgrad/train batch loss grad norm mean": trainbatch_loss_grad_norm_mean,
+                "lossgrad/train batch loss grad norm std": trainbatch_loss_grad_norm_std,
+                "lossgrad/replay batch loss sum grad norm": replaybatch_loss_sum_grad_norm,
+                "lossgrad/replay batch loss mean grad norm": replaybatch_loss_mean_grad_norm,
+                "lossgrad/replay batch loss grad norm mean": replaybatch_loss_grad_norm_mean,
+                "lossgrad/replay batch loss grad norm std": replaybatch_loss_grad_norm_std},
+                step=self.global_iters)
+        logging.info(f"output and loss grad stats logged")
 
+        self.model.train()
         endt = time.time()
         logging.info(f"time elapsed for batch grad stats compute and logging: {endt - startt} seconds")
         return
@@ -979,7 +986,7 @@ class SupTrainerWReplay(SupTrainer):
     def on_iter_end(self, batch, batch_results):
         current_params = utils.get_model_trainable_params(self.model)
         param_dists = [torch.norm(current_params - params) for params in self.model_params_history]
-        wandb.log({f"param dist from param{i}": param_dists[i] for i in range(len(self.model_params_history))}, step=self.global_iters)
+        wandb.log({f"paramdist/param dist from param{i}": param_dists[i] for i in range(len(self.model_params_history))}, step=self.global_iters)
     
         is_task_start_or_end_iter = self.iter_count < 10 or self.iter_count > self.iters_per_task - 10
         if (self.global_iters % self.log_interval == 0) or is_task_start_or_end_iter:
