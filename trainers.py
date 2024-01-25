@@ -906,8 +906,8 @@ class SupTrainerWReplay(SupTrainer):
         startt = time.time()
 
         #correct_output = model_output.gather(1, target_combined.unsqueeze(dim=1)).squeeze().detach()
-        trainbatch_correct_output = trainbatch_model_output.gather(1, target.unsqueeze(dim=1)).squeeze().detach() 
-        replaybatch_correct_output = replaybatch_model_output.gather(1, replay_target.unsqueeze(dim=1)).squeeze().detach() # correct_output[input_images.shape[0]:]
+        trainbatch_correct_output = trainbatch_model_output.gather(1, target.unsqueeze(dim=1)).squeeze(dim=1).detach()
+        replaybatch_correct_output = replaybatch_model_output.gather(1, replay_target.unsqueeze(dim=1)).squeeze(dim=1).detach() # correct_output[input_images.shape[0]:]
 
         trainbatch_correct_output_mean = torch.mean(trainbatch_correct_output)
         trainbatch_correct_output_std = torch.std(trainbatch_correct_output)
