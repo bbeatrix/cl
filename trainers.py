@@ -8,6 +8,7 @@ import gin.torch
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.func import functional_call, vmap, grad, jacrev
 from torch.optim.lr_scheduler import MultiStepLR
 import torchvision
@@ -42,7 +43,7 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
-                 test_on_controlgroup=False, log_meanfeatdists=False):
+                 test_on_controlgroup=False, log_meanfeatdists=False, lossfunction_class=torch.nn.CrossEntropyLoss):
         self.device = device
         self.model = model
         self.data = data
@@ -64,7 +65,8 @@ class Trainer:
         self.lr_scheduler = MultiStepLR(self.optimizer,
                                         milestones=[],
                                         gamma=0.1)
-        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        self.loss_function = lossfunction_class(reduction='none')
+        print(f'Trainer loss function class: {self.loss_function}')
         self.logdir = logdir
         if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
             os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
@@ -385,9 +387,12 @@ class Trainer:
 class SupTrainer(Trainer):
     def __init__(self, device, model, data, logdir):
         super().__init__(device, model, data, logdir)
-        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
+        print(f'Supervised trainer loss function class: {self.loss_function}')
+        #self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
 
     def calc_loss_on_batch(self, model_output, target):
+        if isinstance(self.loss_function, nn.MSELoss):
+            target = torch.nn.functional.one_hot(target, num_classes=self.data.num_classes[0]).float()
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
         return loss_mean
@@ -712,23 +717,28 @@ class SupTrainerWReplay(SupTrainer):
             if self.current_task > 0:
                 input_images_combined = torch.cat([input_images, replay_images], dim=0)
                 target_combined = torch.cat([target, replay_target], dim=0)
-            else:
-                replaybatch_output = self.model(replay_images).detach().clone()
-                replaybatch_computed_loss_mean = torch.mean(self.loss_function(replaybatch_output, replay_target))
-                wandb.log({"loss/unused replay batch loss mean": replaybatch_computed_loss_mean}, step=self.global_iters)
 
             self._log_batch_grad_stats(input_images, target, replay_images, replay_target)
 
         model_output = self.model(input_images_combined)
+        if isinstance(self.loss_function, nn.MSELoss):
+            target_combined = torch.nn.functional.one_hot(target_combined, num_classes=self.data.num_classes[0]).float()
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
         #print(f"LOSS MEAN: {loss_mean}")
 
         if self.use_replay and not self.replay_memory.empty() and self.model.training:
+            replay_target_orig = replay_target.clone()
             if self.current_task > 0:
                 replaybatch_output = model_output[input_images.shape[0]:].detach().clone()
-                
-            self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), replaybatch_output, target, replay_target)
+            else:
+                replaybatch_output = self.model(replay_images).detach().clone()
+                if isinstance(self.loss_function, nn.MSELoss):
+                    replay_target = torch.nn.functional.one_hot(replay_target, num_classes=self.data.num_classes[0]).float()
+                replaybatch_computed_loss_mean = torch.mean(self.loss_function(replaybatch_output, replay_target))
+                wandb.log({"loss/unused replay batch loss mean": replaybatch_computed_loss_mean}, step=self.global_iters)
+
+            self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), replaybatch_output, target, replay_target_orig)
             trainbatch_loss_mean = torch.mean(loss_per_sample[:input_images.shape[0]]).detach().clone()
             replaybatch_loss_mean = torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()
 
