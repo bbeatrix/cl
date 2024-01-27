@@ -552,9 +552,9 @@ class SupTrainerWForgetStats(SupTrainer):
         indices_in_ds = batch[2]
         self.update_forget_stats_and_scores(indices_in_ds, batch_results["corrects"], batch_results["softmax_preds"], batch_results["pred_scores"])
         if self.global_iters % self.log_score_freq == 0:
-            for score_type, scores in self.all_scores.items():
-                self._save_scores(score_type, scores)
-                self._log_scores_hist(self.all_scores[score_type], score_type)
+            #for score_type, scores in self.all_scores.items():
+            #    self._save_scores(score_type, scores)
+            #    self._log_scores_hist(self.all_scores[score_type], score_type)
             
             fs_dict = {"count prev_corrects": sum(self.forget_stats["prev_corrects"]),
                        "count corrects": sum(batch_results["corrects"]),
