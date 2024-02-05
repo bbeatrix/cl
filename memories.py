@@ -45,7 +45,12 @@ class Memory:
             sample_size = min(self.size, sample_size)
             selected_indices = np.random.choice(range(self.size), sample_size, replace=False)
         else:
-            indices = self.target2indices[target]
+            #indices = [item for sublist in [self.target2indices[tgt] for tgt in target] for item in sublist]
+            #indices = [self.target2indices[element] for arr in target for element in arr]
+            indices = []
+            for tgt in target:
+                if tgt in self.target2indices.keys():
+                    indices.extend(self.target2indices[tgt])
             sample_size = min(sample_size, len(indices))
             selected_indices = np.random.choice(indices, sample_size, replace=False)
 
