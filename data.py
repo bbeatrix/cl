@@ -74,6 +74,7 @@ class Data:
                 self.labels = pickle.load(f)
                 self.num_classes_per_task = pickle.load(f)
                 num_tasks = pickle.load(f)
+                self.labels_per_task = pickle.load(f)
                 assert (
                     num_tasks == self.num_tasks
                 ), "Number of tasks in pickle file is not equal to the number of tasks."
@@ -324,6 +325,7 @@ class Data:
         self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
         self.labels = np.array([i for i in range(self.num_classes)])
         self.num_classes_per_task = self.num_classes // self.num_tasks
+        self.labels_per_task = []
 
         if self.num_tasks == 1:
             self.labels = np.array([i for i in range(self.num_classes)])
@@ -331,6 +333,7 @@ class Data:
             self.test_task_datasets = [self.test_dataset]
             self.train_task_datasets_indices_in_orig = [list(range(len(self.train_dataset)))]
             self.test_task_datasets_indices_in_orig = [list(range(len(self.test_dataset)))]
+            self.labels_per_task = [self.labels]
 
         elif self.num_tasks > 1 and self.tasks_split_type  in ["cl", "cl_forgetstatbased"]:
             logging.info(f"Splitting training and test datasets into {self.num_tasks} parts for cl.")
@@ -347,6 +350,7 @@ class Data:
 
             for i in range(0, self.num_classes, num_concurrent_labels):
                 concurrent_labels = self.labels[i: i + num_concurrent_labels]
+                self.labels_per_task.append(concurrent_labels)
 
                 trainset_filtered_indices = np.where(np.isin(train_targets, concurrent_labels))[0]
                 testset_filtered_indices = np.where(np.isin(test_targets, concurrent_labels))[0]
@@ -392,6 +396,7 @@ class Data:
             pickle.dump(self.labels, file)
             pickle.dump(self.num_classes_per_task, file)
             pickle.dump(self.num_tasks, file)
+            pickle.dump(self.labels_per_task, file)
         return
 
     def _create_loaders(self):
