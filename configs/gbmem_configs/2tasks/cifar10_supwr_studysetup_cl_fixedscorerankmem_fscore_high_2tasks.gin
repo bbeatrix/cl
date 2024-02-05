@@ -22,11 +22,16 @@ Trainer.optimizer = @torch.optim.SGD
 Trainer.log_interval = 100
 Trainer.test_on_trainsets = True
 
+SupTrainerWReplay.replay_current_task = False
+SupTrainerWReplay.replay_start_task = 1
 SupTrainerWReplay.test_on_memcontent = True
 SupTrainerWReplay.use_replay = True
-SupTrainerWReplay.memory_type = "fixed" 
+SupTrainerWReplay.memory_type = "precomputedscorerank"
 SupTrainerWReplay.replay_batch_size = 64
 SupTrainerWReplay.replay_memory_size = 1000
+SupTrainerWReplay.precomputed_scores_path = './data/cifar10_train_precomputed_fscores_task=0_epoch=200_studysetup_with_labels.npy'
+SupTrainerWReplay.score_type = "forget"
+SupTrainerWReplay.score_order = "high"
 
 torch.optim.SGD.momentum = 0.9
 torch.optim.SGD.nesterov = True
