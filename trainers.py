@@ -43,7 +43,8 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
-                 test_on_controlgroup=False, log_meanfeatdists=False, lossfunction_class=torch.nn.CrossEntropyLoss):
+                 test_on_controlgroup=False, log_meanfeatdists=False, lossfunction_class=torch.nn.CrossEntropyLoss,
+                 log_grad_stats=True, log_margin_stats=True):
         self.device = device
         self.model = model
         self.data = data
@@ -66,7 +67,11 @@ class Trainer:
                                         milestones=[],
                                         gamma=0.1)
         self.loss_function = lossfunction_class(reduction='none')
-        print(f'Trainer loss function class: {self.loss_function}')
+        logging.info(f'Trainer loss function class: {self.loss_function}')
+
+        self.log_grad_stats = log_grad_stats
+        self.log_margin_stats = log_margin_stats
+
         self.logdir = logdir
         if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
             os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
@@ -746,6 +751,7 @@ class SupTrainerWReplay(SupTrainer):
                 input_images_combined = torch.cat([input_images, replay_images], dim=0)
                 target_combined = torch.cat([target, replay_target], dim=0)
 
+        if self.log_grad_stats:
             if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
                 self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
             self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
@@ -760,18 +766,20 @@ class SupTrainerWReplay(SupTrainer):
 
         if self.use_replay and not self.replay_memory.empty() and self.model.training:
             # log margin stats
-            self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), target, batch_type="train")
-
-            if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
-                replaybatch_output = model_output[input_images.shape[0]:].detach().clone()
-                self._log_margin_stats(replaybatch_output, replay_target, batch_type="replay")
-                wandb.log({"loss/replay batch loss mean": torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()}, step=self.global_iters)
-
             membatch_output = self.model(membatch_images, output_idx).detach().clone()
-            self._log_margin_stats(membatch_output, membatch_target, batch_type="mem")
             if isinstance(self.loss_function, nn.MSELoss):
                 membatch_target = torch.nn.functional.one_hot(membatch_target, num_classes=model_output.shape[-1]).float()
             membatch_computed_loss_mean = torch.mean(self.loss_function(membatch_output, membatch_target))
+
+            if self.log_margin_stats:
+                self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), target, batch_type="train")
+                self._log_margin_stats(membatch_output, membatch_target, batch_type="mem")
+
+            if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
+                replaybatch_output = model_output[input_images.shape[0]:].detach().clone()
+                if self._log_margin_stats:
+                    self._log_margin_stats(replaybatch_output, replay_target, batch_type="replay")
+                wandb.log({"loss/replay batch loss mean": torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()}, step=self.global_iters)
 
             wandb.log({
                 "loss/mem batch loss mean": membatch_computed_loss_mean.detach().clone(),

@@ -7,6 +7,7 @@ from absl import app
 import gin
 import timm
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -253,6 +254,68 @@ class SupConResNet(nn.Module):
         return self.encoder.features(x)
 
 
+def compute_conv_output_size(Lin,kernel_size,stride=1,padding=0,dilation=1):
+    return int(np.floor((Lin+2*padding-dilation*(kernel_size-1)-1)/float(stride)+1))
+
+class AlexNet(nn.Module):
+    def __init__(self, output_shape, width=1, use_bias=False):
+        super(AlexNet, self).__init__()
+
+        self.conv1 = nn.Conv2d(3, 64, 4, bias=use_bias)
+        self.bn1 = nn.BatchNorm2d(64, track_running_stats=False)
+        s = compute_conv_output_size(32, 4)
+        s = s // 2
+
+        self.conv2 = nn.Conv2d(64, 128, 3, bias=use_bias)
+        self.bn2 = nn.BatchNorm2d(128, track_running_stats=False)
+        s = compute_conv_output_size(s,3)
+        s = s // 2
+
+        self.conv3 = nn.Conv2d(128, 256, 2, bias=use_bias)
+        self.bn3 = nn.BatchNorm2d(256, track_running_stats=False)
+        s = compute_conv_output_size(s, 2)
+        s = s // 2
+        print(s) # s = 2?
+
+        self.maxpool=torch.nn.MaxPool2d(2)
+        self.relu=torch.nn.ReLU()
+        self.drop1=torch.nn.Dropout(0.2)
+        self.drop2=torch.nn.Dropout(0.5)
+
+        self.fc1 = nn.Linear(256 * s * s, 2048, bias=use_bias)
+        self.bn4 = nn.BatchNorm1d(2048, track_running_stats=False)
+        self.fc2 = nn.Linear(2048, 2048, bias=use_bias)
+        self.bn5 = nn.BatchNorm1d(2048, track_running_stats=False)
+
+        self.heads = nn.ModuleList()
+        for i in range(len(output_shape)):
+            new_head = nn.Linear(2048, output_shape[i], bias=use_bias)
+            self.heads.append(new_head)
+
+    def features(self, x):
+        x = self.conv1(x)
+        x = self.maxpool(self.drop1(self.relu(self.bn1(x))))
+
+        x = self.conv2(x)
+        x = self.maxpool(self.drop1(self.relu(self.bn2(x))))
+
+        x = self.conv3(x)
+        x = self.maxpool(self.drop2(self.relu(self.bn3(x))))
+
+        x = x.view(x.size(0),-1)
+        x = self.fc1(x)
+        x = self.drop2(self.relu(self.bn4(x)))
+
+        x = self.fc2(x)
+        x = self.drop2(self.relu(self.bn5(x)))
+
+        return x
+
+    def forward(self, x, output_idx=0):
+        out = self.features(x)
+        return self.heads[output_idx](out)
+
+
 @gin.configurable
 def supconresnet(input_shape, output_shape, emb_dim, use_classifier_head, *args):
     return SupConResNet(output_shape, head='mlp', feat_dim=emb_dim)
@@ -268,6 +331,10 @@ def resnet18(input_shape, output_shape, use_claasifier_head, *args):
 @gin.configurable
 def simplecnn(input_shape, output_shape, use_claasifier_head, width=1, use_bias=True, *args):
     return SimpleCNN(output_shape, width=width, use_bias=use_bias)
+
+@gin.configurable
+def alexnet(input_shape, output_shape, use_claasifier_head, width=1, use_bias=True, *args):
+    return AlexNet(output_shape, width=width, use_bias=use_bias)
 
 @gin.configurable
 def vit_pretrained(input_shape, output_shape, *args, **kwargs):
