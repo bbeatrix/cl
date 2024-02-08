@@ -89,6 +89,10 @@ class Trainer:
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
             self.task_end = False
+            if len(self.data.num_classes) > 1:
+                self.train_output_idx = self.current_task % self.num_tasks
+            else:
+                self.train_output_idx = 0
             current_train_loader = self.train_loaders[self.current_task]
             current_train_loader_iterator = iter(current_train_loader)
             results_to_log = None
@@ -178,10 +182,14 @@ class Trainer:
         with torch.no_grad():
             self.model.eval()
             for idx, current_test_loader in enumerate(dataset_loaders):
+                if len(self.data.num_classes) > 1:
+                    test_output_index = idx % self.num_tasks
+                else:
+                    test_output_index = 0
                 test_results = None
                 for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
 
-                    test_batch_results = self.test_on_batch(test_batch)
+                    test_batch_results = self.test_on_batch(test_batch, test_output_index)
 
                     if test_results is None:
                         test_results = test_batch_results.copy()
@@ -229,9 +237,13 @@ class Trainer:
             self.model.eval()
             avg_accuracy = 0
             for idx, current_test_loader in enumerate(self.test_loaders[:(self.current_task + 1)]):
+                if len(self.data.num_classes) > 1:
+                    test_output_index = idx % self.num_tasks
+                else:
+                    test_output_index = 0
                 test_results = None
                 for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
-                    test_batch_results = self.test_on_batch(test_batch)
+                    test_batch_results = self.test_on_batch(test_batch, test_output_index)
 
                     if test_results is None:
                         test_results = test_batch_results.copy()
@@ -284,7 +296,7 @@ class Trainer:
         controlgroup_images = torch.stack([item[0] for cgdict in self.data.control_group.values() for cgitemlist in cgdict.values() for item in cgitemlist]) # 3 x 3x10 the first dim? 
         
         controlgroup_images = controlgroup_images.to(self.device)
-        controlgroup_model_outputs = self.model(controlgroup_images).detach().cpu()
+        controlgroup_model_outputs = self.model(controlgroup_images, self.train_output_idx).detach().cpu()
         self.penultim_feats = True
         if self.penultim_feats:
             controlgroup_model_features = self.model.features(controlgroup_images).detach().cpu()
@@ -360,7 +372,7 @@ class Trainer:
             if penultim_feats:
                 targetimages_model_outputs = self.model.features(images).detach().cpu()
             else:
-                targetimages_model_outputs = self.model(images).detach().cpu()
+                targetimages_model_outputs = self.model(images, self.train_output_idx).detach().cpu()
 
             normalized_targetimages_model_outputs = targetimages_model_outputs / torch.norm(targetimages_model_outputs, p=2, dim=1, keepdim=True)
             mean_feats[target] = torch.mean(targetimages_model_outputs, dim=0)
@@ -376,7 +388,7 @@ class Trainer:
             if penultim_feats:
                 batch_model_outputs = self.model.features(images).detach().cpu()
             else:
-                batch_model_outputs = self.model(images).detach().cpu()
+                batch_model_outputs = self.model(images, self.train_output_idx).detach().cpu()
             for idx, target in enumerate(targets):
                 dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] - mean_feats[target.item()])
                 normalized_dist_from_mean_feats[indices[idx]] = torch.norm(batch_model_outputs[idx] / torch.norm(batch_model_outputs[idx]) - normalized_mean_feats[target.item()])
@@ -392,16 +404,18 @@ class SupTrainer(Trainer):
 
     def calc_loss_on_batch(self, model_output, target):
         if isinstance(self.loss_function, nn.MSELoss):
-            target = torch.nn.functional.one_hot(target, num_classes=self.data.num_classes[0]).float()
+            target = torch.nn.functional.one_hot(target, num_classes=model_output.shape[-1]).float()
         loss_per_sample = self.loss_function(model_output, target)
         loss_mean = torch.mean(loss_per_sample)
         return loss_mean
 
-    def test_on_batch(self, batch):
+    def test_on_batch(self, batch, output_idx=0):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        model_output = self.model(input_images)
+        model_output = self.model(input_images, output_idx)
+        if len(self.data.num_classes) > 1:
+            target = target % self.data.num_classes[output_idx]
 
         loss_mean = self.calc_loss_on_batch(model_output, target)
         predictions = torch.argmax(model_output, dim=1)
@@ -412,7 +426,7 @@ class SupTrainer(Trainer):
 
     def train_on_batch(self, batch):
         self.optimizer.zero_grad()
-        results = self.test_on_batch(batch)
+        results = self.test_on_batch(batch, self.train_output_idx)
         results['total_loss_mean'].backward()
         self.optimizer.step()
         self.lr_scheduler.step()
@@ -510,11 +524,13 @@ class SupTrainerWForgetStats(SupTrainer):
         wandb.log({"count first_learns in iter": count_first_learns}, step=self.global_iters)
         return
 
-    def test_on_batch(self, batch):
+    def test_on_batch(self, batch, output_idx=0):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        model_output = self.model(input_images)
+        model_output = self.model(input_images, output_idx)
+        if len(self.data.num_classes) > 1:
+            target = target % self.data.num_classes[output_idx]
 
         loss_mean = self.calc_loss_on_batch(model_output, target)
         predictions = torch.argmax(model_output, dim=1).detach()
@@ -709,7 +725,7 @@ class SupTrainerWReplay(SupTrainer):
         flattened_grads = torch.cat([grad.reshape(grad.shape[0], -1) for grad in grad_dict.values()], axis=1)
         return flattened_grads
 
-    def calc_loss_on_batch(self, input_images, target):
+    def calc_loss_on_batch(self, input_images, target, output_idx=0):
         input_images_combined = input_images
         target_combined = target
 
@@ -721,6 +737,9 @@ class SupTrainerWReplay(SupTrainer):
             replay_target = replay_target.squeeze(dim=-1).to(dtype=torch.long)
             membatch_images, membatch_target = self.replay_memory.get_samples(self.replay_batch_size)
             membatch_target = membatch_target.squeeze(dim=-1).to(dtype=torch.long)
+            if len(self.data.num_classes) > 1:
+                replay_target = replay_target % self.data.num_classes[output_idx]
+                membatch_target = membatch_target % self.data.num_classes[output_idx]
 
             # replay
             if self.current_task >= self.replay_start_task:
@@ -728,13 +747,13 @@ class SupTrainerWReplay(SupTrainer):
                 target_combined = torch.cat([target, replay_target], dim=0)
 
             if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
-                self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay")
-            self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem")
-            self._log_batch_grad_stats(input_images, target, batch_type="train")
+                self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
+            self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
+            self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
 
-        model_output = self.model(input_images_combined)
+        model_output = self.model(input_images_combined, output_idx)
         if isinstance(self.loss_function, nn.MSELoss):
-            target_combined = torch.nn.functional.one_hot(target_combined, num_classes=self.data.num_classes[0]).float()
+            target_combined = torch.nn.functional.one_hot(target_combined, num_classes=model_output.shape[-1]).float()
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
         #print(f"LOSS MEAN: {loss_mean}")
@@ -748,10 +767,10 @@ class SupTrainerWReplay(SupTrainer):
                 self._log_margin_stats(replaybatch_output, replay_target, batch_type="replay")
                 wandb.log({"loss/replay batch loss mean": torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()}, step=self.global_iters)
 
-            membatch_output = self.model(membatch_images).detach().clone()
+            membatch_output = self.model(membatch_images, output_idx).detach().clone()
             self._log_margin_stats(membatch_output, membatch_target, batch_type="mem")
             if isinstance(self.loss_function, nn.MSELoss):
-                membatch_target = torch.nn.functional.one_hot(membatch_target, num_classes=self.data.num_classes[0]).float()
+                membatch_target = torch.nn.functional.one_hot(membatch_target, num_classes=model_output.shape[-1]).float()
             membatch_computed_loss_mean = torch.mean(self.loss_function(membatch_output, membatch_target))
 
             wandb.log({
@@ -763,13 +782,15 @@ class SupTrainerWReplay(SupTrainer):
                 step=self.global_iters)
         return loss_mean
 
-    def test_on_batch(self, batch):
+    def test_on_batch(self, batch, output_idx=0):
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        loss_mean = self.calc_loss_on_batch(input_images, target)
+        if len(self.data.num_classes) > 1:
+            target = target % self.data.num_classes[output_idx]
+        loss_mean = self.calc_loss_on_batch(input_images, target, output_idx=output_idx)
 
-        model_output = self.model(input_images)
+        model_output = self.model(input_images, output_idx)
         predictions = torch.argmax(model_output, dim=1)
         corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
         accuracy_mean = torch.mean(torch.eq(predictions, target).float())
@@ -791,7 +812,7 @@ class SupTrainerWReplay(SupTrainer):
         x_memcontent = (mem_content["images"], mem_content["targets"].flatten().type(torch.LongTensor))
         with torch.no_grad():
             self.model.eval()
-            test_results = self.test_on_batch(x_memcontent)
+            test_results = self.test_on_batch(x_memcontent, self.train_output_idx)
 
             test_results = {key: value for key, value in test_results.items()
                             if torch.is_tensor(value) == True}
@@ -865,7 +886,7 @@ class SupTrainerWReplay(SupTrainer):
 
         return batch_sum_grad_norm, batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
 
-    def _log_batch_grad_stats(self, input_images, target, batch_type="train"):
+    def _log_batch_grad_stats(self, input_images, target, batch_type="train", output_index=None):
         startt = time.time()
 
         self.model.eval()
@@ -875,7 +896,7 @@ class SupTrainerWReplay(SupTrainer):
             batch = sample.unsqueeze(0)
             targets = target.unsqueeze(0)
 
-            output = functional_call(self.model, (params, buffers), (batch,))
+            output = functional_call(self.model, (params, buffers), (batch, output_index))
             # collect outputs at correct target index
             target_output = torch.gather(output, 1, targets.view(-1, 1))
             return target_output.squeeze()
@@ -885,7 +906,7 @@ class SupTrainerWReplay(SupTrainer):
             batch = sample.unsqueeze(0)
             targets = target.unsqueeze(0)
 
-            predictions = functional_call(self.model, (params, buffers), (batch,))
+            predictions = functional_call(self.model, (params, buffers), (batch, output_index))
             loss_per_sample = self.loss_function(predictions, targets)
             return loss_per_sample.mean()
 

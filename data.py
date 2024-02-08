@@ -17,18 +17,22 @@ class Data:
 
     TASKS_SPLIT_TYPES = ["cl", "forgetstatbased", "cl_forgetstatbased", "random"]
     TASKS_ORDER = ["forgettables_first", "unforgettables_first"]
+    INCREMENTAL_LEARNING_SETUP = ["CIL", "TIL"]
 
     def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised contrastive', augment=True, num_tasks=1, num_cycles=1,
                  apply_vit_transforms=False, simple_augmentation=False, normalization=False,
                  tasks_split_type="cl", forgetstats_path=None, tasks_order="forgettables_first", 
-                 randomsubset_task_datasets=False, randomsubsets_size=5000, use_testset_for_training=False):
+                 randomsubset_task_datasets=False, randomsubsets_size=5000, use_testset_for_training=False,
+                 incremental_learning_setup="CIL"):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         err_message = "Tasks' split type must be element of {}".format(self.TASKS_SPLIT_TYPES)
         assert (tasks_split_type in self.TASKS_SPLIT_TYPES) == True, err_message
         err_message = "Tasks' order type must be element of {}".format(self.TASKS_ORDER)
         assert (tasks_order in self.TASKS_ORDER) == True, err_message
+        err_message = "Incremental learning type must be element of {}".format(self.INCREMENTAL_LEARNING_SETUP)
+        assert (incremental_learning_setup in self.INCREMENTAL_LEARNING_SETUP) == True, err_message
 
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
@@ -48,6 +52,7 @@ class Data:
         self.randomsubset_task_datasets = randomsubset_task_datasets
         self.randomsubsets_size = randomsubsets_size
         self.use_testset_for_training = use_testset_for_training
+        self.incremental_learning_setup = incremental_learning_setup
 
         self._setup()
 
@@ -401,6 +406,8 @@ class Data:
 
     def _create_loaders(self):
         self.num_classes = (self.num_classes,)
+        if self.incremental_learning_setup == "TIL":
+            self.num_classes = (self.num_classes_per_task,) * self.num_tasks
         _collate_func = default_collate
 
         logging.info("Creating train and test data loaders.")

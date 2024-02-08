@@ -105,15 +105,9 @@ class SimpleCNN(nn.Module):
         out = out.view(out.size(0), -1)
         return out
 
-    def forward(self, x):
+    def forward(self, x, output_idx=0):
         out = self.features(x)
-        outputs = []
-        for layer in self.heads:
-            outputs.append(layer(out))
-        if len(outputs) > 1:
-            return outputs
-        else:
-            return outputs[0]
+        return self.heads[output_idx](out)
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -212,15 +206,9 @@ class ResNet(nn.Module, Model):
         out = out.view(out.size(0), -1)
         return out
 
-    def forward(self, x):
+    def forward(self, x, output_idx=0):
         out = self.features(x)
-        outputs = []
-        for layer in self.heads:
-            outputs.append(layer(out))
-        if len(outputs) > 1:
-            return outputs
-        else:
-            return outputs[0]
+        return self.heads[output_idx](out)
 
 
 def Reduced_ResNet18(nclasses, nf=20, bias=True):
@@ -313,15 +301,12 @@ class VisionTransformer(nn.Module):
                 for param in self.output_heads.parameters():
                     param.requires_grad = False
 
-    def forward(self, x):
+    def forward(self, x, output_idx=0):
         x = self.base_model.forward_features(x)
         x = self.emb(x)
         x = F.normalize(x, dim=1)
         if self.use_classifier_head is True:
-            outputs = []
-            for output in self.output_heads:
-                outputs.append(output(x))
-            return outputs[0]
+            return self.output_heads[output_idx](x)
         else:
             return x
 
