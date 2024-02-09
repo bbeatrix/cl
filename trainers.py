@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import copy
 import logging
 import os
 import time
@@ -53,6 +54,7 @@ class Trainer:
         self.num_cycles = data.num_cycles
         self.train_loaders = data.loaders['train_loaders']
         self.test_loaders = data.loaders['test_loaders']
+        self.valid_loaders = data.loaders['valid_loaders']
         self.log_interval = log_interval
         self.iters = iters
         self.epochs_per_task = epochs_per_task
@@ -68,6 +70,7 @@ class Trainer:
                                         gamma=0.1)
         self.loss_function = lossfunction_class(reduction='none')
         logging.info(f'Trainer loss function class: {self.loss_function}')
+        self.best_valid_loss = np.inf
 
         self.log_grad_stats = log_grad_stats
         self.log_margin_stats = log_margin_stats
@@ -106,13 +109,15 @@ class Trainer:
                 err_message = f"{self.epochs_per_task} * {len(current_train_loader)} should be equal to {self.iters_per_task}"
                 assert (epochs2iters_per_task == self.iters_per_task), err_message
                 self.iters_per_task = epochs2iters_per_task
+            self.epoch_count = 0
+            self.training_stop = False
+            self.best_model = None
             for self.iter_count in range(1, self.iters_per_task + 1):
                 logging.info(f"Task {self.current_task + 1}x{self.num_cycles}x{self.num_tasks}, iter {self.iter_count}/{self.iters_per_task}")
                 self.model.train()
                 self.global_iters += 1
                 if self.iter_count == self.iters_per_task:
                     self.task_end = True
-
                 try:
                     batch = next(current_train_loader_iterator)
                 except StopIteration:
@@ -122,7 +127,10 @@ class Trainer:
                 batch_results = self.train_on_batch(batch)
                 self.on_iter_end(batch, batch_results)
                 if self.iter_count % len(current_train_loader) == 0:
+                    self.epoch_count += 1
                     self.on_epoch_end()
+                    if self.training_stop:
+                        break
             self.on_task_end()
         return
 
@@ -166,10 +174,33 @@ class Trainer:
     def on_epoch_end(self):
         if self.test_on_trainsets is True:
                 self.test(self.train_loaders, testing_on_trainsets=True)
+        if len(self.valid_loaders) > 0 and self.valid_loaders is not None:
+            validation_loss, validation_accuracy = self.test([self.valid_loaders[self.current_task]], testing_on_validsets=True)
+            logging.info(f"Validation loss: {validation_loss}, validation accuracy: {validation_accuracy}")
+            if validation_loss < self.best_valid_loss:
+                self.best_model = copy.deepcopy(self.model.state_dict())
+                lr_patience = 6
+            else:
+                lr_patience -= 1
+                if patience <= 0:
+                    self.lr /= 2
+                    print(' lr={:.1e}'.format(self.lr),end='')
+                    if self.lr < 1e-5:
+                        print('Training stopped due to early stopping')
+                        self.training_stop = True
+                    patience = 6
+                    for param_group in self.optimizer.param_groups:
+                        if (self.epoch_count == 1):
+                            param_group['lr'] = self.lr
+                        else:
+                            param_group['lr'] /= 2
         logging.info(f"Epoch {self.iter_count // len(self.train_loaders[self.current_task])} ended.")
 
     def on_task_end(self):
         logging.info(f"Task {self.current_task + 1} ended.")
+        if self.best_model is not None:
+            logging.info(f"Loading back task {self.current_task} best model.")
+            self.model.load_state_dict(copy.deepcopy(self.best_model))
         self.model_params_history.append(utils.get_model_trainable_params(self.model))
         #utils.save_model(self.model,
         #                 os.path.join(self.logdir,
@@ -183,7 +214,7 @@ class Trainer:
         if self.log_meanfeatdists:
             self._log_meanfeatdists()
 
-    def test(self, dataset_loaders, testing_on_trainsets=False):
+    def test(self, dataset_loaders, testing_on_trainsets=False, testing_on_validsets=False):
         with torch.no_grad():
             self.model.eval()
             for idx, current_test_loader in enumerate(dataset_loaders):
@@ -204,7 +235,9 @@ class Trainer:
                         for metric in test_results.keys():
                             test_results[metric] += test_batch_results[metric].data
 
-                if testing_on_trainsets:
+                if testing_on_validsets:
+                    return test_results["total_loss_mean"] / (test_batch_count + 1), test_results["accuracy"] / (test_batch_count + 1)
+                elif testing_on_trainsets:
                     test_results = {f'task {idx+1} test_on_trainsets_{key}': value / (test_batch_count + 1)
                                     for key, value in test_results.items()}
                     

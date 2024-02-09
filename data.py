@@ -24,7 +24,7 @@ class Data:
                  apply_vit_transforms=False, simple_augmentation=False, normalization=False,
                  tasks_split_type="cl", forgetstats_path=None, tasks_order="forgettables_first", 
                  randomsubset_task_datasets=False, randomsubsets_size=5000, use_testset_for_training=False,
-                 incremental_learning_setup="CIL"):
+                 incremental_learning_setup="CIL", validation_ratio=0.0):
         err_message = "Data target type must be element of {}".format(self.TARGET_TYPES)
         assert (target_type in self.TARGET_TYPES) == True, err_message
         err_message = "Tasks' split type must be element of {}".format(self.TASKS_SPLIT_TYPES)
@@ -53,29 +53,32 @@ class Data:
         self.randomsubsets_size = randomsubsets_size
         self.use_testset_for_training = use_testset_for_training
         self.incremental_learning_setup = incremental_learning_setup
+        self.validation_ratio = validation_ratio
 
         self._setup()
 
 
     @property
     def loaders(self):
-        return {'train_loaders': self.train_loaders, 'test_loaders': self.test_loaders}
+        return {'train_loaders': self.train_loaders, 'test_loaders': self.test_loaders, 'valid_loaders': self.valid_loaders}
 
 
     def _setup(self):
         self._get_dataset()
         if os.path.isfile(
-            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl"
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_validationratio={self.validation_ratio}_data.pkl"
         ):
             logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
             with open(
-                f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+                f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_validationratio={self.validation_ratio}_data.pkl",
                 "rb",
             ) as f:
                 self.train_task_datasets = pickle.load(f)
                 self.test_task_datasets = pickle.load(f)
+                self.validation_task_datasets = pickle.load(f)
                 self.train_task_datasets_indices_in_orig = pickle.load(f)
                 self.test_task_datasets_indices_in_orig = pickle.load(f)
+                self.validation_task_datasets_indices_in_orig = pickle.load(f)
                 self.labels = pickle.load(f)
                 self.num_classes_per_task = pickle.load(f)
                 num_tasks = pickle.load(f)
@@ -326,8 +329,9 @@ class Data:
         return
 
     def _create_tasks(self):
-        self.train_task_datasets, self.test_task_datasets = [], []
+        self.train_task_datasets, self.test_task_datasets, self.validation_task_datasets = [], [], []
         self.train_task_datasets_indices_in_orig, self.test_task_datasets_indices_in_orig = [], []
+        self.validation_task_datasets_indices_in_orig = []
         self.labels = np.array([i for i in range(self.num_classes)])
         self.num_classes_per_task = self.num_classes // self.num_tasks
         self.labels_per_task = []
@@ -377,6 +381,9 @@ class Data:
         if self.randomsubset_task_datasets == True:
             self._create_randomsubset_task_datasets()
 
+        if self.validation_ratio > 0.0:
+            self._create_validation_task_datasets()
+
         logging.info(f"Number of train tasks: {len(self.train_task_datasets)}")
         err_message = "Number of train datasets and the number of test datasets should be equal."
         assert len(self.train_task_datasets) == len(self.test_task_datasets), err_message
@@ -391,17 +398,37 @@ class Data:
             num_examples_per_class_per_ds = {c: targets.count(c) for c in self.labels}
             logging.info(f"Number of train examples per classes in {idx + 1}. train task: {num_examples_per_class_per_ds}")
         with open(
-            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_data.pkl",
+            f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_randomsubsettasks={self.randomsubset_task_datasets}_validationratio={self.validation_ratio}_data.pkl",
             "wb",
         ) as file:
             pickle.dump(self.train_task_datasets, file)
             pickle.dump(self.test_task_datasets, file)
+            pickle.dump(self.validation_task_datasets, file)
             pickle.dump(self.train_task_datasets_indices_in_orig, file)
             pickle.dump(self.test_task_datasets_indices_in_orig, file)
+            pickle.dump(self.validation_task_datasets_indices_in_orig, file)
             pickle.dump(self.labels, file)
             pickle.dump(self.num_classes_per_task, file)
             pickle.dump(self.num_tasks, file)
             pickle.dump(self.labels_per_task, file)
+        return
+
+    def _create_validation_task_datasets(self):
+        logging.info(f"Creating validation subsets of size {self.validation_ratio} from each training dataset.")
+
+        for idx, ds in enumerate(self.train_task_datasets):
+            err_message =  f"Length of {idx}. task dataset {len(ds)} should be greater than the subset size {self.validation_ratio * len(ds)}."
+            assert len(ds) >= self.validation_ratio * len(ds), err_message
+
+            indices_permutation = np.random.permutation(len(ds))
+            limit_index = int(self.validation_ratio * len(ds))
+            subset_indices = indices_permutation[:limit_index]
+            remaining_indices = indices_permutation[limit_index:]
+
+            self.validation_task_datasets.append(torch.utils.data.Subset(ds, subset_indices))
+            self.validation_task_datasets_indices_in_orig.append(self.train_task_datasets_indices_in_orig[idx][subset_indices])
+            self.train_task_datasets[idx] = torch.utils.data.Subset(ds,remaining_indices)
+            self.train_task_datasets_indices_in_orig[idx] = self.train_task_datasets_indices_in_orig[idx][remaining_indices]
         return
 
     def _create_loaders(self):
@@ -410,8 +437,8 @@ class Data:
             self.num_classes = (self.num_classes_per_task,) * self.num_tasks
         _collate_func = default_collate
 
-        logging.info("Creating train and test data loaders.")
-        self.train_loaders, self.test_loaders = [], []
+        logging.info("Creating train, validation and test data loaders.")
+        self.train_loaders, self.test_loaders, self.valid_loaders = [], [], []
 
         for ds in self.train_task_datasets:
             self.train_loaders.append(torch.utils.data.DataLoader(ds,
@@ -425,8 +452,15 @@ class Data:
                                                                  shuffle=True,
                                                                  collate_fn=_collate_func,
                                                                  **self.dataloader_kwargs))
+        for ds in self.validation_task_datasets:
+            self.valid_loaders.append(torch.utils.data.DataLoader(ds,
+                                                                 batch_size=self.batch_size,
+                                                                 shuffle=True,
+                                                                 collate_fn=_collate_func,
+                                                                 **self.dataloader_kwargs))
         self.train_loaders = self.train_loaders * self.num_cycles
         self.test_loaders = self.test_loaders * self.num_cycles
+        self.valid_loaders = self.valid_loaders * self.num_cycles
 
 
 class DatasetWIndices(torch.utils.data.Dataset):
