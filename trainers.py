@@ -24,11 +24,12 @@ def trainer_maker(target_type, *args):
         raise NotImplementedError
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
 class Trainer:
-    def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
+    def __init__(self, seed, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lossfunction_class=torch.nn.CrossEntropyLoss,
                  test_on_trainsets=False, log_grad_stats=False, log_margin_stats=False):
+        self.seed = seed
         self.device = device
         self.model = model
         self.data = data
@@ -281,10 +282,10 @@ class Trainer:
         return
 
 
-@gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
+@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):
-    def __init__(self, device, model, data, logdir):
-        super().__init__(device, model, data, logdir)
+    def __init__(self, seed, device, model, data, logdir):
+        super().__init__(seed, device, model, data, logdir)
         logging.info(f'Supervised trainer loss function class: {self.loss_function}')
 
     def calc_loss_on_batch(self, model_output, target):
@@ -331,3 +332,10 @@ class SupTrainer(Trainer):
         self.optimizer.step()
         self.lr_scheduler.step()
         return results
+
+
+@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
+class SupAlignedTrainer(SupTrainer):
+    def __init__(self, seed, device, model, data, logdir):
+        super().__init__(seed, device, model, data, logdir)
+

@@ -66,14 +66,17 @@ class ExperimentManager():
             self.dataloader_kwargs = {'num_workers': self.num_workers, 'pin_memory': False}
 
     def setup_trainer(self):
-        self.data = data.Data(self.datadir,
+        self.data = data.Data(self.seed,
+                              self.datadir,
                               self.dataloader_kwargs)
 
-        self.model = models.Model(self.device,
+        self.model = models.Model(self.seed,
+                                  self.device,
                                   self.data.input_shape,
                                   self.data.num_classes)
 
         self.trainer = trainers.trainer_maker(self.data.target_type,
+                                              self.seed,
                                               self.device,
                                               self.model.build(),
                                               self.data,
@@ -90,7 +93,7 @@ def main(argv):
 
     os.environ["WANDB_DIR"] = gin_config_to_dict(gin.config_str())["ExperimentManager.logdir"]
     if "WANDB_API_TOKEN" in os.environ:
-        wandb.init(project="gbmem", entity="bbea")
+        wandb.init(project="mm", entity="bbea")
         exp_logdir = wandb.run.dir
         exp_prefix = ""
     else:

@@ -17,10 +17,11 @@ import torch.nn as nn
 from torch.nn.functional import relu, avg_pool2d
 
 
-@gin.configurable(denylist=['device', 'input_shape', 'output_shape'])
+@gin.configurable(denylist=['seed', 'device', 'input_shape', 'output_shape'])
 class Model():
-    def __init__(self, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
+    def __init__(self, seed, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
                  pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
+        self.seed = seed
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape

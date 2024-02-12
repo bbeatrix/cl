@@ -9,14 +9,14 @@ from torch.utils.data.dataloader import default_collate
 from torchvision import datasets, transforms as tfs
 
 
-@gin.configurable(denylist=['datadir', 'dataloader_kwargs'])
+@gin.configurable(denylist=['seed', 'datadir', 'dataloader_kwargs'])
 class Data:
     TARGET_TYPES = ['supervised']
     TASKS_SPLIT_TYPES = ["cl"]
     TASKS_ORDER = ["default_class_order"]
     INCREMENTAL_LEARNING_SETUP = ["CIL", "TIL"]
 
-    def __init__(self, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
+    def __init__(self, seed, datadir, dataloader_kwargs, dataset_name='cifar10', image_size=32, batch_size=64,
                  target_type='supervised', augment=True, num_tasks=1, num_cycles=1,
                  apply_vit_transforms=False, simple_augmentation=False, normalization=False,
                  tasks_split_type="cl", tasks_order="default_class_order",
@@ -31,6 +31,7 @@ class Data:
         err_message = "Incremental learning type must be element of {}".format(self.INCREMENTAL_LEARNING_SETUP)
         assert (incremental_learning_setup in self.INCREMENTAL_LEARNING_SETUP) == True, err_message
 
+        self.seed = seed
         self.datadir = datadir
         self.dataloader_kwargs = dataloader_kwargs
         self.dataset_name = dataset_name
@@ -59,7 +60,7 @@ class Data:
         if os.path.isfile(
             f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_validationratio={self.validation_ratio}_data.pkl"
         ):
-            logging.info(f"Loading {self.dataset_name} {self.num_tasks} data from pickle.")
+            logging.info(f"Loading {self.dataset_name} dataset with {self.num_tasks} tasks {self.tasks_split_type} split data from pickle.")
             with open(
                 f"{self.datadir}/{self.dataset_name}_{self.num_tasks}tasks_splittype={self.tasks_split_type}_validationratio={self.validation_ratio}_data.pkl",
                 "rb",
