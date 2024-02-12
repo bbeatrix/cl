@@ -58,8 +58,8 @@ class Trainer:
         self.log_margin_stats = log_margin_stats
 
         self.logdir = logdir
-        if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
-            os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
+        if not os.path.isdir(os.path.join("data", "model_checkpoints")):
+            os.makedirs(os.path.join("data", "model_checkpoints"))
 
         self.model_params_history = [utils.get_model_trainable_params(self.model)]
 
@@ -107,7 +107,7 @@ class Trainer:
                     batch = next(current_train_loader_iterator)
 
                 batch_results = self.train_on_batch(batch)
-                self.on_iter_end(batch, batch_results)
+                self.on_iter_end(batch_results)
                 if self.iter_count % len(current_train_loader) == 0:
                     self.epoch_count += 1
                     self.on_epoch_end()
@@ -148,6 +148,17 @@ class Trainer:
         return
 
     def on_epoch_end(self):
+        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+        model_path = os.path.join("data",
+                                  "model_checkpoints",
+                                  name_template.format(self.seed,
+                                                       self.data.dataset_name,
+                                                       self.data.num_tasks,
+                                                       self.current_task,
+                                                       self.global_iters,
+                                                       self.seed))
+        utils.save_model(self.model, model_path)
+
         if self.test_on_trainsets is True:
                 self.test(self.train_loaders, testing_on_trainsets=True)
         if len(self.valid_loaders) > 0 and self.valid_loaders is not None:
@@ -178,10 +189,6 @@ class Trainer:
             logging.info(f"Loading back task {self.current_task} best model.")
             self.model.load_state_dict(copy.deepcopy(self.best_model))
         self.model_params_history.append(utils.get_model_trainable_params(self.model))
-        #utils.save_model(self.model,
-        #                 os.path.join(self.logdir,
-        #                              "model_checkpoints",
-        #                              f"model_seed={self.seed}_task={self.current_task}_globaliter={self.global_iters}"))
         self.test(self.test_loaders)
         if self.test_on_trainsets is True:
             self.test(self.train_loaders, testing_on_trainsets=True)
@@ -338,4 +345,34 @@ class SupTrainer(Trainer):
 class SupAlignedTrainer(SupTrainer):
     def __init__(self, seed, device, model, data, logdir):
         super().__init__(seed, device, model, data, logdir)
+        self.reinit_model(self.seed + 1, task_idx=0, global_iter=0)
+        exit()
+
+    def compare_weights(model1, model2):
+        for param1, param2 in zip(model1.parameters(), model2.parameters()):
+            if not torch.equal(param1, param2):
+                return False
+        return True
+
+    def reinit_model(self, model_init_seed, task_idx=0, global_iter=0):
+        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+        model_path = os.path.join("data",
+                                  "model_checkpoints",
+                                  name_template.format(model_init_seed,
+                                                       self.data.dataset_name,
+                                                       self.data.num_tasks,
+                                                       task_idx,
+                                                       global_iter,
+                                                       self.seed))
+        print(f"Loading model from {model_path}")
+        print("Model before loading: ", self.model)
+        model_before = copy.deepcopy(self.model)
+        self.model.load(model_path)
+        print("Model after loading: ", self.model)
+        # check model_before != self.model
+        print("Model before == Model after: ", self.compare_weights(model_before, self.model))
+        return
+
+    def align_model(self):
+        pass
 

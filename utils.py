@@ -27,10 +27,13 @@ def save_image(image, name, iteration, filename, normalize=True):
     tv.utils.save_image(image, filename, normalize=normalize)
     wandb.log({name: filename}, step=iteration)
 
-def save_model(model, model_path):
-    now = datetime.now()
-    dt_str = f"_datettime={now.strftime('%d%m%Y_%H%M%S')}"
-    save_path = model_path + dt_str + '.torch'
+def save_model(model, model_path, add_datetime=False):
+    if add_datetime:
+        now = datetime.now()
+        dt_str = f"_datettime={now.strftime('%d%m%Y_%H%M%S')}"
+        save_path = model_path + dt_str + '.torch'
+    else:
+        save_path = model_path + '.pt'
     torch.save(model.state_dict(), save_path)
     logging.info(f"Saved model to {save_path}.")
 

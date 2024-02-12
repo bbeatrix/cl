@@ -19,13 +19,13 @@ from torch.nn.functional import relu, avg_pool2d
 
 @gin.configurable(denylist=['seed', 'device', 'input_shape', 'output_shape'])
 class Model():
-    def __init__(self, seed, device, input_shape, output_shape, model_path=None, model_class=gin.REQUIRED,
+    def __init__(self, seed, device, input_shape, output_shape, model_init_path=None, model_class=gin.REQUIRED,
                  pretrained=True, freeze_base=False, freeze_top=False, emb_dim=None, use_classifier_head=False):
         self.seed = seed
         self.device = device
         self.input_shape = input_shape
         self.output_shape = output_shape
-        self.model_path = model_path
+        self.model_init_path = model_init_path
         self.model_class = model_class
         self.pretrained = pretrained
         self.freeze_base = freeze_base
@@ -48,13 +48,13 @@ class Model():
         logging.info("Model summary:\n")
         summary(self.model, self.input_shape)
 
-        if self.model_path is not None and os.path.exists(self.model_path):
-            self.load()
+        if self.model_init_path is not None and os.path.exists(self.model_init_path):
+            self.load(self.model_init_path)
         return self.model
 
-    def load(self):
-        logging.info(f"Load model from {self.model_path}")
-        loaded_state = torch.load(self.model_path)
+    def load(self, model_path):
+        logging.info(f"Load model from {model_path}")
+        loaded_state = torch.load(model_path)
         model_state = self.model.state_dict()
         loaded_state = {k: v for k, v in loaded_state.items() if (k in model_state) and
                         (model_state[k].shape == loaded_state[k].shape)}
@@ -66,6 +66,7 @@ class Model():
         ]
         state_dict_str = '\n'.join(state_dict_str_list)
         logging.info(f"Model's state_dict: {state_dict_str}")
+        return
 
 
 class SimpleCNN(nn.Module):
