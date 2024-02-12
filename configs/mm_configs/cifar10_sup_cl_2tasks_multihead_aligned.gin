@@ -1,6 +1,6 @@
 ExperimentManager.seed = 1
 ExperimentManager.logdir = './outputs'
-ExperimentManager.train_type = 'standard'
+ExperimentManager.train_type = 'aligned'
 
 Data.dataset_name = 'cifar10'
 Data.target_type = 'supervised'

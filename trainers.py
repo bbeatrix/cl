@@ -16,9 +16,11 @@ import grad_log
 import utils
 
 
-def trainer_maker(target_type, *args):
+def trainer_maker(target_type, train_type, *args):
     logging.info(f'\nTarget type: {target_type}\n')
-    if target_type == 'supervised':
+    if target_type == 'supervised' and train_type == 'aligned':
+        return SupAlignedTrainer(*args)
+    elif target_type == 'supervised':
         return SupTrainer(*args)
     else:
         raise NotImplementedError
@@ -75,6 +77,8 @@ class Trainer:
         self.global_iters = 0
         self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
         self.task_accuracies = {}
+        self.current_task = 0
+        self.save_model()
         logging.info("Start training.")
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
@@ -148,16 +152,7 @@ class Trainer:
         return
 
     def on_epoch_end(self):
-        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
-        model_path = os.path.join("data",
-                                  "model_checkpoints",
-                                  name_template.format(self.seed,
-                                                       self.data.dataset_name,
-                                                       self.data.num_tasks,
-                                                       self.current_task,
-                                                       self.global_iters,
-                                                       self.seed))
-        utils.save_model(self.model, model_path)
+        self.save_model()
 
         if self.test_on_trainsets is True:
                 self.test(self.train_loaders, testing_on_trainsets=True)
@@ -288,6 +283,18 @@ class Trainer:
             wandb.log({'task accuracies dict': task_acc_array}, step=self.global_iters)
         return
 
+    def save_model(self):
+        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+        model_path = os.path.join("data",
+                                  "model_checkpoints",
+                                  name_template.format(self.seed,
+                                                       self.data.dataset_name,
+                                                       self.data.num_tasks,
+                                                       self.current_task,
+                                                       self.global_iters,
+                                                       self.seed))
+        utils.save_model(self.model, model_path)
+
 
 @gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):
@@ -345,17 +352,14 @@ class SupTrainer(Trainer):
 class SupAlignedTrainer(SupTrainer):
     def __init__(self, seed, device, model, data, logdir):
         super().__init__(seed, device, model, data, logdir)
-        self.reinit_model(self.seed + 1, task_idx=0, global_iter=0)
+        self.reinit_model(self.seed, task_idx=0, global_iter=782, global_seed=None)
         exit()
 
-    def compare_weights(model1, model2):
-        for param1, param2 in zip(model1.parameters(), model2.parameters()):
-            if not torch.equal(param1, param2):
-                return False
-        return True
 
-    def reinit_model(self, model_init_seed, task_idx=0, global_iter=0):
-        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+    def reinit_model(self, model_init_seed, task_idx=0, global_iter=0, global_seed=None):
+        if global_seed is None:
+            global_seed = model_init_seed
+        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}.pt"
         model_path = os.path.join("data",
                                   "model_checkpoints",
                                   name_template.format(model_init_seed,
@@ -363,14 +367,14 @@ class SupAlignedTrainer(SupTrainer):
                                                        self.data.num_tasks,
                                                        task_idx,
                                                        global_iter,
-                                                       self.seed))
+                                                       global_seed))
         print(f"Loading model from {model_path}")
         print("Model before loading: ", self.model)
         model_before = copy.deepcopy(self.model)
-        self.model.load(model_path)
+        utils.load_model(self.model, model_path)
         print("Model after loading: ", self.model)
         # check model_before != self.model
-        print("Model before == Model after: ", self.compare_weights(model_before, self.model))
+        print("Model before == Model after: ", utils.compare_weights(model_before, self.model))
         return
 
     def align_model(self):

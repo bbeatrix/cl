@@ -37,6 +37,20 @@ def save_model(model, model_path, add_datetime=False):
     torch.save(model.state_dict(), save_path)
     logging.info(f"Saved model to {save_path}.")
 
+def load_model(model, model_path):
+    model.load_state_dict(torch.load(model_path))
+    logging.info(f"Loaded model from {model_path}.")
+    return model
+
+def compare_weights(model1, model2):
+    for param1, param2 in zip(model1.parameters(), model2.parameters()):
+        if not torch.equal(param1, param2):
+            logging.info(f"Models have different weights: {param1.name} and {param2.name} are different.")
+            logging.info(f"param1: {param1}")
+            logging.info(f"param2: {param2}")
+            return False
+    return True
+
 def get_model_trainable_params(model):
     return torch.cat([param.clone().detach().view(-1) for param in model.parameters() if param.requires_grad])
 

@@ -20,13 +20,14 @@ from utils import gin_config_to_dict
 @gin.configurable
 class ExperimentManager():
     def __init__(self, seed=0, no_cuda=False, num_workers=2, logdir=None, prefix='',
-                 datadir=os.path.expanduser('~/datasets')):
+                 datadir=os.path.expanduser('~/datasets'), train_type="standard"):
         self.seed = seed
         self.no_cuda = no_cuda
         self.num_workers = num_workers
         self.logdir = logdir
         self.prefix = prefix
         self.datadir = datadir
+        self.train_type = train_type
 
         self.setup_environment()
         self.setup_torch()
@@ -76,6 +77,7 @@ class ExperimentManager():
                                   self.data.num_classes)
 
         self.trainer = trainers.trainer_maker(self.data.target_type,
+                                              self.train_type,
                                               self.seed,
                                               self.device,
                                               self.model.build(),
