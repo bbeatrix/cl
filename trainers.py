@@ -766,6 +766,7 @@ class SupTrainerWReplay(SupTrainer):
     def calc_loss_on_batch(self, input_images, target, output_idx=0):
         input_images_combined = input_images
         target_combined = target
+        output_indices = torch.full_like(target, output_idx)
 
         if self.use_replay and not self.replay_memory.empty() and self.model.training:
             if not self.replay_current_task:
@@ -776,6 +777,7 @@ class SupTrainerWReplay(SupTrainer):
             membatch_images, membatch_target = self.replay_memory.get_samples(self.replay_batch_size)
             membatch_target = membatch_target.squeeze(dim=-1).to(dtype=torch.long)
             if len(self.data.num_classes) > 1:
+                replay_output_indices = replay_target // self.data.num_classes_per_task
                 replay_target = replay_target % self.data.num_classes[output_idx]
                 membatch_target = membatch_target % self.data.num_classes[output_idx]
 
@@ -783,6 +785,7 @@ class SupTrainerWReplay(SupTrainer):
             if self.current_task >= self.replay_start_task:
                 input_images_combined = torch.cat([input_images, replay_images], dim=0)
                 target_combined = torch.cat([target, replay_target], dim=0)
+                output_indices = torch.cat((output_indices, replay_output_indices), dim=0)
 
         if self.log_grad_stats:
             if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
@@ -790,7 +793,7 @@ class SupTrainerWReplay(SupTrainer):
             self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
             self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
 
-        model_output = self.model(input_images_combined, output_idx)
+        model_output = self.model(input_images_combined)[torch.arange(input_images_combined.size(0)), output_indices]
         if isinstance(self.loss_function, nn.MSELoss):
             target_combined = torch.nn.functional.one_hot(target_combined, num_classes=model_output.shape[-1]).float()
         loss_per_sample = self.loss_function(model_output, target_combined)

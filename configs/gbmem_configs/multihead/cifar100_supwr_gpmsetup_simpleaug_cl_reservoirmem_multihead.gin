@@ -1,0 +1,38 @@
+ExperimentManager.seed = 1
+ExperimentManager.logdir = './outputs'
+
+Data.dataset_name = 'cifar100'
+Data.target_type = 'supervised with replay'
+Data.incremental_learning_setup = 'TIL'
+Data.image_size = 32
+Data.batch_size = 64
+Data.augment = True
+Data.simple_augmentation = True
+Data.normalization = True
+Data.num_tasks = 10
+Data.num_cycles = 1
+Data.validation_ratio = 0.05
+
+Model.model_class = @models.alexnet
+Model.use_classifier_head = True
+
+Trainer.iters = 150000
+Trainer.epochs_per_task = 200
+Trainer.lr = 0.05
+Trainer.wd = 0.0
+Trainer.optimizer = @torch.optim.SGD
+Trainer.log_interval = 100
+Trainer.log_grad_stats = False
+Trainer.log_margin_stats = False
+Trainer.test_on_trainsets = False
+
+SupTrainerWReplay.test_on_memcontent = False
+SupTrainerWReplay.replay_current_task = False
+SupTrainerWReplay.replay_start_task = 1
+SupTrainerWReplay.use_replay = True
+SupTrainerWReplay.memory_type = "reservoir" 
+SupTrainerWReplay.replay_batch_size = 64
+SupTrainerWReplay.replay_memory_size = 2000
+
+torch.optim.SGD.momentum = 0.0
+torch.optim.SGD.nesterov = False

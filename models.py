@@ -106,9 +106,14 @@ class SimpleCNN(nn.Module):
         out = out.view(out.size(0), -1)
         return out
 
-    def forward(self, x, output_idx=0):
+    def forward(self, x, output_idx=None):
         out = self.features(x)
-        return self.heads[output_idx](out)
+        if output_idx is not None:
+            return self.heads[output_idx](out)
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        return torch.stack(outputs).permute(1, 0, 2)
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -207,9 +212,14 @@ class ResNet(nn.Module, Model):
         out = out.view(out.size(0), -1)
         return out
 
-    def forward(self, x, output_idx=0):
+    def forward(self, x, output_idx=None):
         out = self.features(x)
-        return self.heads[output_idx](out)
+        if output_idx is not None:
+            return self.heads[output_idx](out)
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        return torch.stack(outputs).permute(1, 0, 2)
 
 
 def Reduced_ResNet18(nclasses, nf=20, bias=True):
@@ -311,9 +321,14 @@ class AlexNet(nn.Module):
 
         return x
 
-    def forward(self, x, output_idx=0):
+    def forward(self, x, output_idx=None):
         out = self.features(x)
-        return self.heads[output_idx](out)
+        if output_idx is not None:
+            return self.heads[output_idx](out)
+        outputs = []
+        for layer in self.heads:
+            outputs.append(layer(out))
+        return torch.stack(outputs).permute(1, 0, 2)
 
 
 @gin.configurable
