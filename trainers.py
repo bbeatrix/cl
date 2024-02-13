@@ -2,6 +2,7 @@ from abc import abstractmethod
 import copy
 import logging
 import os
+import re
 import time
 
 import gin
@@ -79,6 +80,7 @@ class Trainer:
         self.iters_per_task = self.iters // self.num_tasks // self.num_cycles
         self.task_accuracies = {}
         self.current_task = 0
+        self.learnt_targets = []
         self.save_model()
         logging.info("Start training.")
 
@@ -298,6 +300,26 @@ class Trainer:
                                                        self.seed))
         utils.save_model(self.model, model_path)
 
+    def load_model_from_taskend(self):
+        model_dir = os.path.join("data", "model_checkpoints")
+        name_template = "model={}_{}_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+        name_template_fill = name_template.format(self.model.name,
+                                                  self.train_type,
+                                                  self.seed,
+                                                  self.data.dataset_name,
+                                                  self.data.num_tasks,
+                                                  0,
+                                                  '.+',
+                                                  self.seed)
+        all_files = os.listdir(model_dir)
+        matching_files = [file for file in all_files if re.match(name_template, file)]
+        globaliter_values = [int(re.search(r'globaliter=(\d+)', file).group(1)) for file in matching_files]
+        max_globaliter_file = max(zip(globaliter_values, matching_files))[1]
+        selected_file_path = os.path.join(model_dir, max_globaliter_file)
+        logging.info(f"Loading model from {selected_file_path}")
+        utils.load_model(self.model, selected_file_path)
+        return
+
 
 @gin.configurable(denylist=['train_type', 'seed', 'device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):
@@ -356,7 +378,10 @@ class SupAlignedTrainer(SupTrainer):
     def __init__(self, train_type, seed, device, model, data, logdir):
         super().__init__(train_type, seed, device, model, data, logdir)
 
+        # self.train_type = 'standard'
         self.reinit_model(self.seed, task_idx=0, global_iter=0, global_seed=None)
+
+        self.load_model_from_taskend()
 
         exit()
 
@@ -379,13 +404,14 @@ class SupAlignedTrainer(SupTrainer):
         model_before = copy.deepcopy(self.model)
         utils.load_model(self.model, model_path)
         print("Model after loading: ", self.model)
-        # check model_before != self.model
+
         model_before_params = utils.get_model_trainable_params(model_before)
         model_after_params = utils.get_model_trainable_params(self.model)
         param_diff = model_before_params - model_after_params
         print("Param diff: ", param_diff)
         print("first 10 params: \n", model_before_params[:10], model_after_params[:10])
         print("Model before == Model after: ", utils.compare_weights(model_before, self.model))
+
         return
 
     def align_model(self):
