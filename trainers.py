@@ -19,18 +19,19 @@ import utils
 def trainer_maker(target_type, train_type, *args):
     logging.info(f'\nTarget type: {target_type}\n')
     if target_type == 'supervised' and train_type == 'aligned':
-        return SupAlignedTrainer(*args)
+        return SupAlignedTrainer(train_type, *args)
     elif target_type == 'supervised':
-        return SupTrainer(*args)
+        return SupTrainer(train_type, *args)
     else:
         raise NotImplementedError
 
 
-@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
+@gin.configurable(denylist=['train_type', 'seed', 'device', 'model', 'data', 'logdir'])
 class Trainer:
-    def __init__(self, seed, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
+    def __init__(self, train_type, seed, device, model, data, logdir, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lossfunction_class=torch.nn.CrossEntropyLoss,
-                 test_on_trainsets=False, log_grad_stats=False, log_margin_stats=False):
+                 test_on_trainsets=False, log_grad_stats=False, log_margin_stats=False, log_interval=100, **kwargs):
+        self.train_type = train_type
         self.seed = seed
         self.device = device
         self.model = model
@@ -284,10 +285,12 @@ class Trainer:
         return
 
     def save_model(self):
-        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
+        name_template = "model={}_{}_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}"
         model_path = os.path.join("data",
                                   "model_checkpoints",
-                                  name_template.format(self.seed,
+                                  name_template.format(self.model.name,
+                                                       self.train_type,
+                                                       self.seed,
                                                        self.data.dataset_name,
                                                        self.data.num_tasks,
                                                        self.current_task,
@@ -296,10 +299,10 @@ class Trainer:
         utils.save_model(self.model, model_path)
 
 
-@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
+@gin.configurable(denylist=['train_type', 'seed', 'device', 'model', 'data', 'logdir'])
 class SupTrainer(Trainer):
-    def __init__(self, seed, device, model, data, logdir):
-        super().__init__(seed, device, model, data, logdir)
+    def __init__(self, train_type, seed, device, model, data, logdir):
+        super().__init__(train_type, seed, device, model, data, logdir)
         logging.info(f'Supervised trainer loss function class: {self.loss_function}')
 
     def calc_loss_on_batch(self, model_output, target):
@@ -348,21 +351,24 @@ class SupTrainer(Trainer):
         return results
 
 
-@gin.configurable(denylist=['seed', 'device', 'model', 'data', 'logdir'])
+@gin.configurable(denylist=['train_type', 'seed', 'device', 'model', 'data', 'logdir'])
 class SupAlignedTrainer(SupTrainer):
-    def __init__(self, seed, device, model, data, logdir):
-        super().__init__(seed, device, model, data, logdir)
-        self.reinit_model(self.seed, task_idx=0, global_iter=782, global_seed=None)
-        exit()
+    def __init__(self, train_type, seed, device, model, data, logdir):
+        super().__init__(train_type, seed, device, model, data, logdir)
 
+        self.reinit_model(self.seed, task_idx=0, global_iter=0, global_seed=None)
+
+        exit()
 
     def reinit_model(self, model_init_seed, task_idx=0, global_iter=0, global_seed=None):
         if global_seed is None:
             global_seed = model_init_seed
-        name_template = "model_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}.pt"
+        name_template = "model={}_{}_seed={}_{}_{}tasks_task={}_globaliter={}_globalseed={}.pt"
         model_path = os.path.join("data",
                                   "model_checkpoints",
-                                  name_template.format(model_init_seed,
+                                  name_template.format(self.model.name,
+                                                       self.train_type,
+                                                       model_init_seed,
                                                        self.data.dataset_name,
                                                        self.data.num_tasks,
                                                        task_idx,
@@ -374,6 +380,11 @@ class SupAlignedTrainer(SupTrainer):
         utils.load_model(self.model, model_path)
         print("Model after loading: ", self.model)
         # check model_before != self.model
+        model_before_params = utils.get_model_trainable_params(model_before)
+        model_after_params = utils.get_model_trainable_params(self.model)
+        param_diff = model_before_params - model_after_params
+        print("Param diff: ", param_diff)
+        print("first 10 params: \n", model_before_params[:10], model_after_params[:10])
         print("Model before == Model after: ", utils.compare_weights(model_before, self.model))
         return
 

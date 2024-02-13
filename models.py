@@ -70,8 +70,9 @@ class Model():
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self, output_shape, use_bias=True, width=1):
+    def __init__(self, output_shape, use_bias=True, width=1, name='simplpecnn'):
         super(SimpleCNN, self).__init__()
+        self.name = name
         self.conv1 = nn.Conv2d(3, 32 * width, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32 * width, 64 * width, kernel_size=3, stride=1, padding=1)
         self.conv3 = nn.Conv2d(64 * width, 128 * width, kernel_size=3, stride=1, padding=1)
@@ -178,8 +179,9 @@ class Bottleneck(nn.Module):
         return out
 
 class ResNet(nn.Module, Model):
-    def __init__(self, block, num_blocks, output_shape, nf, bias):
+    def __init__(self, block, num_blocks, output_shape, nf, bias, name='resnet18'):
         super(ResNet, self).__init__()
+        self.name = name
         self.in_planes = nf
         self.conv1 = conv3x3(3, nf * 1)
         self.bn1 = nn.BatchNorm2d(nf * 1)
@@ -228,13 +230,14 @@ def Reduced_ResNet18(nclasses, nf=20, bias=True):
     """
     Reduced ResNet18 as in GEM MIR(note that nf=20).
     """
-    return ResNet(BasicBlock, [2, 2, 2, 2], nclasses, nf, bias)
+    return ResNet(BasicBlock, [2, 2, 2, 2], nclasses, nf, bias, name='reduced_resnet18')
 
 
 class SupConResNet(nn.Module):
     """backbone + projection head"""
-    def __init__(self, output_shape, dim_in=160, head='mlp', feat_dim=128):
+    def __init__(self, output_shape, dim_in=160, head='mlp', feat_dim=128, name='supconresnet'):
         super(SupConResNet, self).__init__()
+        self.name = name
         self.encoder = Reduced_ResNet18((100,))
         self.features_dim = dim_in
 
@@ -270,9 +273,10 @@ def compute_conv_output_size(Lin,kernel_size,stride=1,padding=0,dilation=1):
     return int(np.floor((Lin+2*padding-dilation*(kernel_size-1)-1)/float(stride)+1))
 
 class AlexNet(nn.Module):
-    def __init__(self, output_shape, width=1, use_bias=False):
+    def __init__(self, output_shape, width=1, use_bias=False, name='alexnet'):
         super(AlexNet, self).__init__()
 
+        self.name = name
         self.conv1 = nn.Conv2d(3, 64, 4, bias=use_bias)
         self.bn1 = nn.BatchNorm2d(64, track_running_stats=False)
         s = compute_conv_output_size(32, 4)
@@ -360,8 +364,9 @@ def vit_pretrained(input_shape, output_shape, *args, **kwargs):
 
 class VisionTransformer(nn.Module):
     def __init__(self, input_shape, output_shape, emb_dim, use_classifier_head, pretrained, freeze_base,
-                 freeze_top, *args, **kwargs):
+                 freeze_top, name='vit', *args, **kwargs):
         super().__init__()
+        self.name = name
         self.base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained, num_classes=0)
         if emb_dim is not None:
             logging.info('Add extra embedding layer.')
