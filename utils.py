@@ -63,5 +63,4 @@ def off_diagonal(x):
 def add_wandb_log_prefixes(results_to_log_dict):
     new = {("loss/" + key) if "loss" in key else ("accuracy/" + key) if "accuracy" in key else key: value
             for key, value in results_to_log_dict.items()}
-    print(new)
     return new

@@ -291,7 +291,6 @@ class AlexNet(nn.Module):
         self.bn3 = nn.BatchNorm2d(256, track_running_stats=False)
         s = compute_conv_output_size(s, 2)
         s = s // 2
-        print(s) # s = 2?
 
         self.maxpool=torch.nn.MaxPool2d(2)
         self.relu=torch.nn.ReLU()
