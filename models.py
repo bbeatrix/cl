@@ -70,6 +70,7 @@ class Model():
 class SimpleCNN(nn.Module):
     def __init__(self, output_shape, use_bias=True, width=1):
         super(SimpleCNN, self).__init__()
+        self.output_shape = output_shape
         self.conv1 = nn.Conv2d(3, 32 * width, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32 * width, 64 * width, kernel_size=3, stride=1, padding=1)
         self.conv3 = nn.Conv2d(64 * width, 128 * width, kernel_size=3, stride=1, padding=1)
@@ -178,6 +179,7 @@ class Bottleneck(nn.Module):
 class ResNet(nn.Module, Model):
     def __init__(self, block, num_blocks, output_shape, nf, bias):
         super(ResNet, self).__init__()
+        self.output_shape = output_shape
         self.in_planes = nf
         self.conv1 = conv3x3(3, nf * 1)
         self.bn1 = nn.BatchNorm2d(nf * 1)
@@ -270,7 +272,7 @@ def compute_conv_output_size(Lin,kernel_size,stride=1,padding=0,dilation=1):
 class AlexNet(nn.Module):
     def __init__(self, output_shape, width=1, use_bias=False):
         super(AlexNet, self).__init__()
-
+        self.output_shape = output_shape
         self.conv1 = nn.Conv2d(3, 64, 4, bias=use_bias)
         self.bn1 = nn.BatchNorm2d(64, track_running_stats=False)
         s = compute_conv_output_size(32, 4)

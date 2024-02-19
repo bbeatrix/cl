@@ -44,8 +44,7 @@ def trainer_maker(target_type, *args):
 class Trainer:
     def __init__(self, device, model, data, logdir, log_interval=100, iters=gin.REQUIRED, epochs_per_task=None,
                  lr=gin.REQUIRED, wd=gin.REQUIRED, optimizer=gin.REQUIRED, lr_scheduler=MultiStepLR, test_on_trainsets=False,
-                 test_on_controlgroup=False, log_meanfeatdists=False, lossfunction_class=torch.nn.CrossEntropyLoss,
-                 log_grad_stats=True, log_margin_stats=True):
+                 test_on_controlgroup=False, log_meanfeatdists=False, lossfunction_class=torch.nn.CrossEntropyLoss):
         self.device = device
         self.model = model
         self.data = data
@@ -72,9 +71,6 @@ class Trainer:
         logging.info(f'Trainer loss function class: {self.loss_function}')
         self.best_valid_loss = np.inf
 
-        self.log_grad_stats = log_grad_stats
-        self.log_margin_stats = log_margin_stats
-
         self.logdir = logdir
         if not os.path.isdir(os.path.join(self.logdir, "model_checkpoints")):
             os.makedirs(os.path.join(self.logdir, "model_checkpoints"))
@@ -97,7 +93,7 @@ class Trainer:
 
         for self.current_task in range(0, self.num_tasks * self.num_cycles):
             self.task_end = False
-            if len(self.data.num_classes) > 1:
+            if len(self.model.output_shape) > 1:
                 self.train_output_idx = self.current_task % self.num_tasks
             else:
                 self.train_output_idx = 0
@@ -184,9 +180,9 @@ class Trainer:
                 lr_patience -= 1
                 if patience <= 0:
                     self.lr /= 2
-                    print(' lr={:.1e}'.format(self.lr),end='')
+                    logging.info(' lr={:.1e}'.format(self.lr),end='')
                     if self.lr < 1e-5:
-                        print('Training stopped due to early stopping')
+                        logging.info('Training stopped due to early stopping')
                         self.training_stop = True
                     patience = 6
                     for param_group in self.optimizer.param_groups:
@@ -218,7 +214,7 @@ class Trainer:
         with torch.no_grad():
             self.model.eval()
             for idx, current_test_loader in enumerate(dataset_loaders):
-                if len(self.data.num_classes) > 1:
+                if len(self.model.output_shape) > 1:
                     test_output_index = idx % self.num_tasks
                 else:
                     test_output_index = 0
@@ -275,7 +271,7 @@ class Trainer:
             self.model.eval()
             avg_accuracy = 0
             for idx, current_test_loader in enumerate(self.test_loaders[:(self.current_task + 1)]):
-                if len(self.data.num_classes) > 1:
+                if len(self.model.output_shape) > 1:
                     test_output_index = idx % self.num_tasks
                 else:
                     test_output_index = 0
@@ -437,7 +433,7 @@ class Trainer:
 class SupTrainer(Trainer):
     def __init__(self, device, model, data, logdir):
         super().__init__(device, model, data, logdir)
-        print(f'Supervised trainer loss function class: {self.loss_function}')
+        logging.info(f'Supervised trainer loss function class: {self.loss_function}')
         #self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
 
     def calc_loss_on_batch(self, model_output, target):
@@ -452,8 +448,8 @@ class SupTrainer(Trainer):
         input_images = input_images.to(self.device)
         target = target.to(self.device)
         model_output = self.model(input_images, output_idx)
-        if len(self.data.num_classes) > 1:
-            target = target % self.data.num_classes[output_idx]
+        if len(self.model.output_shape) > 1:
+            target = target % self.model.output_shape[output_idx]
 
         loss_mean = self.calc_loss_on_batch(model_output, target)
         predictions = torch.argmax(model_output, dim=1)
@@ -567,8 +563,8 @@ class SupTrainerWForgetStats(SupTrainer):
         input_images = input_images.to(self.device)
         target = target.to(self.device)
         model_output = self.model(input_images, output_idx)
-        if len(self.data.num_classes) > 1:
-            target = target % self.data.num_classes[output_idx]
+        if len(self.model.output_shape) > 1:
+            target = target % self.model.output_shape[output_idx]
 
         loss_mean = self.calc_loss_on_batch(model_output, target)
         predictions = torch.argmax(model_output, dim=1).detach()
@@ -660,10 +656,16 @@ class SupTrainerWReplay(SupTrainer):
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
                  score_order=None, update_content_scores=None, check_containing=None, test_on_memcontent=False,
                  use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True, randomselect_unforgettables=False,
-                 replay_current_task=True, replay_start_task=0):
+                 replay_current_task=True, replay_start_task=0, log_grad_stats=True, log_margin_stats=True,
+                 test_multihead_merge=False, test_taskaware_singlehead=False):
         logging.info('Supervised trainer.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
+
+        self.test_multihead_merge = test_multihead_merge
+        self.test_taskaware_singlehead = test_taskaware_singlehead
+        self.log_grad_stats = log_grad_stats
+        self.log_margin_stats = log_margin_stats
 
         if self.use_replay:
             logging.info('Use replay from memory.')
@@ -763,23 +765,24 @@ class SupTrainerWReplay(SupTrainer):
         flattened_grads = torch.cat([grad.reshape(grad.shape[0], -1) for grad in grad_dict.values()], axis=1)
         return flattened_grads
 
-    def calc_loss_on_batch(self, input_images, target, output_idx=0):
+    def calc_loss_on_batch(self, input_images, target, model, output_idx=0):
         input_images_combined = input_images
         target_combined = target
         output_indices = torch.full_like(target, output_idx)
 
-        if self.use_replay and not self.replay_memory.empty() and self.model.training:
+        if self.use_replay and not self.replay_memory.empty() and model == self.model and model.training:
             if not self.replay_current_task:
                 replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size, target=self.learnt_targets)
             else:
                 replay_images, replay_target = self.replay_memory.get_samples(self.replay_batch_size)
             replay_target = replay_target.squeeze(dim=-1).to(dtype=torch.long)
+            replay_output_indices = torch.full_like(replay_target, output_idx)
             membatch_images, membatch_target = self.replay_memory.get_samples(self.replay_batch_size)
             membatch_target = membatch_target.squeeze(dim=-1).to(dtype=torch.long)
-            if len(self.data.num_classes) > 1:
-                replay_output_indices = replay_target // self.data.num_classes_per_task
-                replay_target = replay_target % self.data.num_classes[output_idx]
-                membatch_target = membatch_target % self.data.num_classes[output_idx]
+            if len(model.output_shape) > 1:
+                replay_output_indices = replay_target // self.data.num_classes_per_task # or self.model.output_shape[output_idx]
+                replay_target = replay_target % self.model.output_shape[output_idx]
+                membatch_target = membatch_target % self.model.output_shape[output_idx]
 
             # replay
             if self.current_task >= self.replay_start_task:
@@ -787,22 +790,21 @@ class SupTrainerWReplay(SupTrainer):
                 target_combined = torch.cat([target, replay_target], dim=0)
                 output_indices = torch.cat((output_indices, replay_output_indices), dim=0)
 
-        if self.log_grad_stats:
-            if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
-                self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
-            self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
-            self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
+            if self.log_grad_stats and model == self.model:
+                if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
+                    self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
+                self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
+                self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
 
-        model_output = self.model(input_images_combined)[torch.arange(input_images_combined.size(0)), output_indices]
+        model_output = model(input_images_combined)[torch.arange(input_images_combined.size(0)), output_indices]
         if isinstance(self.loss_function, nn.MSELoss):
             target_combined = torch.nn.functional.one_hot(target_combined, num_classes=model_output.shape[-1]).float()
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
-        #print(f"LOSS MEAN: {loss_mean}")
 
-        if self.use_replay and not self.replay_memory.empty() and self.model.training:
+        if self.use_replay and not self.replay_memory.empty() and model== self.model and model.training:
             # log margin stats
-            membatch_output = self.model(membatch_images, output_idx).detach().clone()
+            membatch_output = model(membatch_images, output_idx).detach().clone()
             if isinstance(self.loss_function, nn.MSELoss):
                 membatch_target = torch.nn.functional.one_hot(membatch_target, num_classes=model_output.shape[-1]).float()
             membatch_computed_loss_mean = torch.mean(self.loss_function(membatch_output, membatch_target))
@@ -826,15 +828,16 @@ class SupTrainerWReplay(SupTrainer):
                 step=self.global_iters)
         return loss_mean
 
-    def test_on_batch(self, batch, output_idx=0):
+    def test_on_batch(self, batch, output_idx=0, model=None):
+        model = self.model if model is None else model
         input_images, target = batch[0], batch[1]
         input_images = input_images.to(self.device)
         target = target.to(self.device)
-        if len(self.data.num_classes) > 1:
-            target = target % self.data.num_classes[output_idx]
-        loss_mean = self.calc_loss_on_batch(input_images, target, output_idx=output_idx)
+        if len(model.output_shape) > 1:
+            target = target % model.output_shape[output_idx]
+        loss_mean = self.calc_loss_on_batch(input_images, target, model, output_idx=output_idx)
 
-        model_output = self.model(input_images, output_idx)
+        model_output = model(input_images, output_idx)
         predictions = torch.argmax(model_output, dim=1)
         corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
         accuracy_mean = torch.mean(torch.eq(predictions, target).float())
@@ -856,7 +859,7 @@ class SupTrainerWReplay(SupTrainer):
         x_memcontent = (mem_content["images"], mem_content["targets"].flatten().type(torch.LongTensor))
         with torch.no_grad():
             self.model.eval()
-            test_results = self.test_on_batch(x_memcontent, self.train_output_idx)
+            test_results = self.test_on_batch(x_memcontent, output_idx=self.train_output_idx)
 
             test_results = {key: value for key, value in test_results.items()
                             if torch.is_tensor(value) == True}
@@ -874,6 +877,160 @@ class SupTrainerWReplay(SupTrainer):
 
             test_results = utils.add_wandb_log_prefixes(test_results)
             wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
+        return
+
+    def test_with_taskaware_singlehead(self):
+        logging.info("Testing with taskaware singlehead")
+        err_message = "The model should have a single output layer for testing with taskaware singlehead"
+        assert len(self.model.output_shape) == 1, err_message
+        test_output_index = 0
+
+        with torch.no_grad():
+            self.model.eval()
+            taskaware_singlehead_avg_accuracy = 0
+            for idx, current_test_loader in enumerate(self.test_loaders[:(self.current_task + 1)]):
+                test_results = None
+                for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
+                    test_batch_results = {}
+                    input_images, target = test_batch[0].to(self.device), test_batch[1].to(self.device)
+                    #loss_mean = self.calc_loss_on_batch(input_images, target, model, output_idx=output_idx)
+
+                    model_output = self.model(input_images, test_output_index)
+                    # set outputs to -inf for all tasks except the current task
+                    taskaware_indices = self.data.labels_per_task[idx]
+                    masked_output = model_output.clone()
+                    masked_output[:, list(set(range(model_output.shape[-1])) - set(taskaware_indices))] = float('-inf')
+
+                    predictions = torch.argmax(masked_output, dim=1)
+                    corrects = torch.eq(predictions, target).detach().cpu().numpy().astype(int)
+                    accuracy_mean = torch.mean(torch.eq(predictions, target).float())
+
+                    test_batch_results = {'accuracy': accuracy_mean}
+
+                    if test_results is None:
+                        test_results = test_batch_results.copy()
+                        test_results = {key: value for key, value in test_results.items()
+                                        if torch.is_tensor(value) == True}
+                    else:
+                        for metric in test_results.keys():
+                            test_results[metric] += test_batch_results[metric].data
+
+                test_results = {f'task {idx+1} test_taskaware_singlehead_{key}': value / (test_batch_count + 1)
+                                for key, value in test_results.items()}
+                template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
+                            + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
+
+                logging.info(template.format(idx + 1,
+                                             self.num_tasks,
+                                             self.num_cycles,
+                                             self.global_iters,
+                                             float(self.global_iters) / self.iters * 100.,
+                                             *[item.data for item in test_results.values()]))
+
+                taskaware_singlehead_avg_accuracy += test_results[f"task {idx+1} test_taskaware_singlehead_accuracy"]
+
+                test_results = utils.add_wandb_log_prefixes(test_results)
+                wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
+            taskaware_singlehead_avg_accuracy /= (self.current_task + 1)
+            logging.info(f"Average accuracy taskaware singlehead eval: {taskaware_singlehead_avg_accuracy}")
+            wandb.log({"average accuracy taskaware singlehead eval": taskaware_singlehead_avg_accuracy}, step=self.global_iters)
+        return
+
+
+    def test_with_multihead_merge(self):
+        err_message = "The model should have a multihead output layer for testing with multihead merge"
+        assert len(self.model.output_shape) > 1, err_message
+
+        logging.info("Testing with multihead merge")
+
+        self.model.eval()
+        model_with_merged_heads = copy.deepcopy(self.model)
+
+        new_output_shape = sum(model_with_merged_heads.output_shape)
+        merge_layer = torch.nn.Linear(in_features=model_with_merged_heads.heads[0].out_features,
+                                        out_features=new_output_shape,
+                                        bias=False,
+                                        device=self.device)
+        model_with_merged_heads.heads = nn.ModuleList([nn.Sequential(head, merge_layer)
+                                                        for head in model_with_merged_heads.heads])
+        # merge_layer.weight.data = torch.cat([head.weight.data for head in self.model.heads], dim=1)
+        model_with_merged_heads.output_shape = (new_output_shape,)
+        model_with_merged_heads.train()
+        logging.info(f"Merge layer weight shape: {merge_layer.weight.shape}")
+        logging.info(f"Model with merged heads: {model_with_merged_heads}")
+
+        #assert merge_layer.requires_grad == True, "Merge layer should have requires_grad=True"
+        assert model_with_merged_heads.training == True, "Model with merged heads should be in eval mode except the merge layer"
+        # train the added merge layer on memory content for 10 epochs
+        assert self.replay_memory.empty() == False, "Replay memory should not be empty"
+
+        mem_content = self.replay_memory.content
+        x_memcontent = (mem_content["images"], mem_content["targets"].flatten().type(torch.LongTensor))
+        #merge_layer_optimizer = self.optimizer.__class__(merge_layer.parameters(), lr=self.optimizer.defaults["lr"])
+        merge_optimizer = self.optimizer.__class__(merge_layer.parameters(),
+                                                    lr=self.optimizer.defaults["lr"])
+
+        logging.info("Training merge layer on memory content for 50 epochs")
+
+        for i in range(50):
+            #model_output = model_with_merged_heads(x_memcontent[0])
+            #memcontent_target = x_memcontent[1]
+            #if isinstance(self.loss_function, nn.MSELoss):
+            #    memcontent_target = torch.nn.functional.one_hot(memcontent_target, num_classes=model_output.shape[-1]).float()
+            #loss_per_sample = self.loss_function(model_output, memcontent_target)
+            #loss_mean = torch.mean(loss_per_sample)
+
+            #accuracy = torch.mean(torch.eq(torch.argmax(model_output, dim=1), memcontent_target).float())
+            result = self.test_on_batch(x_memcontent, output_idx=0, model=model_with_merged_heads)
+            loss_mean = result["total_loss_mean"]
+            accuracy = result["accuracy"]
+
+            #make_dot(loss_mean).render("loss_mean")
+            #make_dot(accuracy).render("accuracy")
+            #make_dot(loss_mean, params=dict(merge_layer.named_parameters())).render("loss_mean_with_merge_layer")
+
+            wandb.log({"loss/multiheadmerge train loss mean": loss_mean.detach().clone(),
+                        "accuracy/multiheadmerge train accuracy": accuracy.detach().clone()},
+                        step=i)
+
+            logging.info(f"Epoch {i}/50, loss: {loss_mean}, accuracy: {accuracy}")
+
+            merge_optimizer.zero_grad()
+
+            loss_mean.backward()
+            merge_optimizer.step()
+
+        logging.info("Training merge layer on memory content finished")
+        logging.info("Testing model with merged heads on test loaders")
+        model_with_merged_heads.eval()
+
+        # test on test loaders
+        for idx, current_test_loader in enumerate(self.test_loaders):
+            test_results = None
+            for test_batch_count, test_batch in enumerate(current_test_loader, start=0):
+                test_batch_results = self.test_on_batch(test_batch, model=model_with_merged_heads)
+                if test_results is None:
+                    test_results = test_batch_results.copy()
+                    test_results = {key: value for key, value in test_results.items()
+                                    if torch.is_tensor(value) == True}
+                else:
+                    for metric in test_results.keys():
+                        test_results[metric] += test_batch_results[metric].data
+
+            test_results = {f'task {idx+1} multiheadmerge test_{key}': value / (test_batch_count + 1)
+                            for key, value in test_results.items()}
+            template = ("Task {}/{}x{}\tTest\tglobal iter: {} ({:.2f}%), metrics: "
+                        + "".join([key + ": {:.3f}  " for key in test_results.keys()]))
+            logging.info(template.format(idx + 1,
+                                            self.num_tasks,
+                                            self.num_cycles,
+                                            self.global_iters,
+                                            float(self.global_iters) / self.iters * 100.,
+                                            *[item.data for item in test_results.values()]))
+
+            test_results = utils.add_wandb_log_prefixes(test_results)
+            wandb.log({metric: result for metric, result in test_results.items()}, step=self.global_iters)
+
         return
 
     def _log_replay_memory_images(self):
@@ -1022,9 +1179,16 @@ class SupTrainerWReplay(SupTrainer):
 
     def on_task_end(self):
         super(SupTrainerWReplay, self).on_task_end()
+
+        if self.test_multihead_merge:
+            self.test_with_multihead_merge()
+
+        if self.test_taskaware_singlehead:
+            self.test_with_taskaware_singlehead()
+
         if self.use_replay:
             self.learnt_targets.extend(list(self.data.labels_per_task[self.current_task]))
-            print(f"learnt targets: {self.learnt_targets}")
+            logging.info(f"Learnt targets: {self.learnt_targets}")
 
     def on_epoch_end(self):
         super(SupTrainerWReplay, self).on_epoch_end()
