@@ -337,7 +337,7 @@ class LeastForgettablesMemory(Memory):
                     self._update_content_at_idx(update_image, update_target, update_idx_in_ds, replace_idx_in_content, update_forget_score)
         return
 
-    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, model_output, global_iters):
+    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, model_output, global_iters, *args):
         self._update_forget_stats(indices_in_ds, corrects, model_output, global_iters)
         if self.update_content_scores:
             indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))[0]
@@ -346,6 +346,105 @@ class LeastForgettablesMemory(Memory):
         for i in range(update_images.shape[0]):
             self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
 
+        return
+
+class OnlineSelectMemory(Memory):
+    def __init__(self, image_shape, target_shape, device, size_limit, update_content_scores, check_containing,
+                 replace_newest, num_train_examples, score_order, score_type):
+        super().__init__(image_shape, target_shape, device, size_limit)
+
+        self.score_order = score_order
+        self.score_type = score_type
+        self.update_content_scores = update_content_scores
+        self.check_containing = check_containing
+        self.size_limit_per_target = size_limit
+        self.size_per_target = {}
+        self.replace_newest = replace_newest
+        self.num_train_examples = num_train_examples
+
+        self.stats = {"output_margin": -np.inf * np.ones(self.num_train_examples, dtype=float),
+                      "fgrad_norm": np.inf * np.ones(self.num_train_examples, dtype=float),
+                      "lossgrad_norm": np.inf * np.ones(self.num_train_examples, dtype=float),}
+
+        self.global_scores = self.stats[self.score_type].copy()
+
+        self.content.update({self.score_type: np.inf * np.ones(self.size_limit, dtype=float)})
+
+    def _update_stats(self, idxs, output_margin, fgrad_norm, lossgrad_norm):
+        self.stats["output_margin"][idxs] = output_margin
+        self.stats["fgrad_norm"][idxs] = fgrad_norm
+        self.stats["lossgrad_norm"][idxs] = lossgrad_norm
+        self.global_scores = self.stats[self.score_type].copy()
+        return
+
+    def _remove_idx_with_target(self, idx, target):
+        old_target = self.content['targets'][idx].item()
+        self.target2indices[old_target].remove(idx)
+
+    def _update_content_at_idx(self, update_image, update_target, update_idx_in_ds, idx, score):
+        super(OnlineSelectMemory, self)._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx)
+        self.content[self.score_type][idx] = score
+
+    def get_index_of_replace(self):
+        for target, size in self.size_per_target.items():
+            if size > self.size_limit_per_target:
+                scores = self.content[self.score_type][self.target2indices[target]]
+                if self.replace_newest:
+                    select_idx = -1
+                else:
+                    select_idx = 0
+                if self.score_order == "low":
+                    replace_score_idx = np.argwhere(scores == np.max(scores)).flatten()[select_idx]
+                else:
+                    replace_score_idx = np.argwhere(scores == np.min(scores)).flatten()[select_idx]
+                idx = self.target2indices[target][replace_score_idx]
+                self.target2indices[target].pop(replace_score_idx)
+                self.size_per_target[target] -= 1
+                return idx
+        return
+
+
+    def _update_with_item(self, update_image, update_target, update_idx_in_ds):
+        update_score = self.global_scores[update_idx_in_ds]
+        target_value = update_target.item()
+        if target_value not in self.size_per_target.keys():
+            self.size_per_target[target_value] = 0
+            self.size_limit_per_target = self.size_limit // len(self.size_per_target)
+        if self.check_containing == False or (self.check_containing == True and update_idx_in_ds not in self.content["indices_in_ds"]):
+            if self.size < self.size_limit and self.size_per_target[target_value] < self.size_limit_per_target:
+                idx = self.size
+                self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_score)
+                self.size += 1
+                self.size_per_target[target_value] += 1
+
+            elif self.size_per_target[target_value] < self.size_limit_per_target:
+                idx = self.get_index_of_replace()
+                self._update_content_at_idx(update_image, update_target, update_idx_in_ds, idx, update_score)
+                self.size_per_target[target_value] += 1
+
+            else:
+                scores_in_content = self.content[self.score_type][self.target2indices[target_value]]
+                replace_idx_in_content = None
+                if (self.score_order == "low" and np.max(scores_in_content) > update_score):
+                    replace_score_idx = np.argmax(scores_in_content)
+                    replace_idx_in_content = self.target2indices[target_value][replace_score_idx]
+                    self.target2indices[target_value].pop(replace_score_idx)
+                elif self.score_order == "high" and np.min(scores_in_content) < update_score:
+                    replace_score_idx = np.argmin(scores_in_content)
+                    replace_idx_in_content = self.target2indices[target_value][replace_score_idx]
+                    self.target2indices[target_value].pop(replace_score_idx)
+                if replace_idx_in_content is not None:
+                    self._update_content_at_idx(update_image, update_target, update_idx_in_ds, replace_idx_in_content, update_score)
+        return
+
+    def on_batch_end(self, update_images, update_targets, indices_in_ds, corrects, softmax_output, global_iters, margin, fgradnorm, lossgradnorm):
+        self._update_stats(indices_in_ds, margin, fgradnorm, lossgradnorm)
+        if self.update_content_scores:
+            indices_where_content = np.where(np.not_equal(self.content["indices_in_ds"], None))[0]
+            content_indices_in_ds = [self.content["indices_in_ds"][i] for i in indices_where_content]
+            self.content[self.score_type][indices_where_content] = self.global_scores[content_indices_in_ds]
+        for i in range(update_images.shape[0]):
+            self._update_with_item(update_images[i], update_targets[i], indices_in_ds[i])
         return
 
 

@@ -650,7 +650,7 @@ class SupTrainerWForgetStats(SupTrainer):
 @gin.configurable(denylist=['device', 'model', 'data', 'logdir'])
 class SupTrainerWReplay(SupTrainer):
 #class SupTrainerWReplay(SupTrainerWForgetStats):
-    MEMORY_TYPES = ["fixed", "reservoir", "precomputedscorerank", "leastforgettables"]
+    MEMORY_TYPES = ["fixed", "reservoir", "precomputedscorerank", "leastforgettables", "onlineselect"]
 
     def __init__(self, device, model, data, logdir, use_replay=gin.REQUIRED, memory_type=gin.REQUIRED,
                  replay_memory_size=None, replay_batch_size=None, precomputed_scores_path=None, score_type=None,
@@ -658,7 +658,7 @@ class SupTrainerWReplay(SupTrainer):
                  use_soft_forgets=False, softforget_pred_threshold=0.95, replace_newest=True, randomselect_unforgettables=False,
                  replay_current_task=True, replay_start_task=0, log_grad_stats=True, log_margin_stats=True,
                  test_multihead_merge=False, test_taskaware_singlehead=False):
-        logging.info('Supervised trainer.')
+        logging.info('Supervised trainer with/without replay.')
         super().__init__(device, model, data, logdir)
         self.use_replay = use_replay
 
@@ -753,6 +753,20 @@ class SupTrainerWReplay(SupTrainer):
 
             if not os.path.isdir(os.path.join(self.logdir, "first_learn_iters")):
                 os.makedirs(os.path.join(self.logdir, "first_learn_iters"))
+        elif self.memory_type == "onlineselect":
+            self.replay_memory = memories.OnlineSelectMemory(
+                image_shape=self.data.input_shape,
+                target_shape=(1,),
+                device=self.device,
+                size_limit=self.replay_memory_size,
+                update_content_scores=self.update_content_scores,
+                check_containing=self.check_containing,
+                replace_newest=self.replace_newest,
+                num_train_examples=len(self.data.train_dataset),
+                score_order=self.score_order,
+                score_type=self.score_type)
+        else:
+            raise NotImplementedError
 
         if not os.path.isdir(os.path.join(self.logdir, "memory_content_idxinds")):
             os.makedirs(os.path.join(self.logdir, "memory_content_idxinds"))
@@ -769,6 +783,9 @@ class SupTrainerWReplay(SupTrainer):
         input_images_combined = input_images
         target_combined = target
         output_indices = torch.full_like(target, output_idx)
+        output_margin = None
+        fgrad_norm = None
+        lossgrad_norm = None
 
         if self.use_replay and not self.replay_memory.empty() and model == self.model and model.training:
             if not self.replay_current_task:
@@ -792,15 +809,23 @@ class SupTrainerWReplay(SupTrainer):
 
             if self.log_grad_stats and model == self.model:
                 if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
-                    self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
-                self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
-                self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
+                    _, _ = self._log_batch_grad_stats(replay_images, replay_target, batch_type="replay", output_index=output_idx)
+                _, _ = self._log_batch_grad_stats(membatch_images, membatch_target, batch_type="mem", output_index=output_idx)
+                #fgrad_norm, lossgrad_norm = self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
+        
+        if model == self.model and model.training and self.log_grad_stats:
+            fgrad_norm, lossgrad_norm = self._log_batch_grad_stats(input_images, target, batch_type="train", output_index=output_idx)
+            fgrad_norm, lossgrad_norm = fgrad_norm.detach().cpu().numpy(), lossgrad_norm.detach().cpu().numpy()
 
         model_output = model(input_images_combined)[torch.arange(input_images_combined.size(0)), output_indices]
         if isinstance(self.loss_function, nn.MSELoss):
             target_combined = torch.nn.functional.one_hot(target_combined, num_classes=model_output.shape[-1]).float()
         loss_per_sample = self.loss_function(model_output, target_combined)
         loss_mean = torch.mean(loss_per_sample)
+
+        if model == self.model and model.training and self.log_margin_stats:
+            output_margin = self._log_margin_stats(model_output[:input_images.shape[0]], target, batch_type="train")
+            output_margin = output_margin.detach().cpu().numpy()
 
         if self.use_replay and not self.replay_memory.empty() and model== self.model and model.training:
             # log margin stats
@@ -810,13 +835,13 @@ class SupTrainerWReplay(SupTrainer):
             membatch_computed_loss_mean = torch.mean(self.loss_function(membatch_output, membatch_target))
 
             if self.log_margin_stats:
-                self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), target, batch_type="train")
-                self._log_margin_stats(membatch_output, membatch_target, batch_type="mem")
+                #output_margin = self._log_margin_stats(model_output[:input_images.shape[0]].detach().clone(), target, batch_type="train")
+                _ = self._log_margin_stats(membatch_output, membatch_target, batch_type="mem")
 
             if self.current_task >= self.replay_start_task and replay_images.shape[0] > 0:
                 replaybatch_output = model_output[input_images.shape[0]:].detach().clone()
                 if self._log_margin_stats:
-                    self._log_margin_stats(replaybatch_output, replay_target, batch_type="replay")
+                    _ = self._log_margin_stats(replaybatch_output, replay_target, batch_type="replay")
                 wandb.log({"loss/replay batch loss mean": torch.mean(loss_per_sample[input_images.shape[0]:]).detach().clone()}, step=self.global_iters)
 
             wandb.log({
@@ -826,7 +851,7 @@ class SupTrainerWReplay(SupTrainer):
                 "replay batch size": replay_images.shape[0],
                 "replayed images count": input_images_combined.shape[0] - input_images.shape[0]},
                 step=self.global_iters)
-        return loss_mean
+        return loss_mean, output_margin, fgrad_norm, lossgrad_norm
 
     def test_on_batch(self, batch, output_idx=0, model=None):
         model = self.model if model is None else model
@@ -835,7 +860,10 @@ class SupTrainerWReplay(SupTrainer):
         target = target.to(self.device)
         if len(model.output_shape) > 1:
             target = target % model.output_shape[output_idx]
-        loss_mean = self.calc_loss_on_batch(input_images, target, model, output_idx=output_idx)
+        loss_mean, margin, fgrad_norm, lossgrad_norm = self.calc_loss_on_batch(input_images,
+                                                                               target,
+                                                                               model,
+                                                                               output_idx=output_idx)
 
         model_output = model(input_images, output_idx)
         predictions = torch.argmax(model_output, dim=1)
@@ -852,6 +880,9 @@ class SupTrainerWReplay(SupTrainer):
                    'corrects': corrects,
                    'softmax_preds': softmax_preds,
                    # 'pred_scores': pred_scores,
+                   'margin': margin,
+                   'fgrad_norm': fgrad_norm,
+                   'lossgrad_norm': lossgrad_norm,
                    }
         return results
 
@@ -1085,7 +1116,7 @@ class SupTrainerWReplay(SupTrainer):
         endt = time.time()
         #logging.info(f"time elapsed for batch {function.__name__.replace('_func', '')} grad stats compute: {endt - startt} seconds")
 
-        return batch_sum_grad_norm, batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
+        return per_sample_grad_norms, batch_sum_grad_norm, batch_mean_grad_norm, batch_grad_norm_mean, batch_grad_norm_std
 
     def _log_batch_grad_stats(self, input_images, target, batch_type="train", output_index=None):
         startt = time.time()
@@ -1111,8 +1142,8 @@ class SupTrainerWReplay(SupTrainer):
             loss_per_sample = self.loss_function(predictions, targets)
             return loss_per_sample.mean()
 
-        batch_out_sum_grad_norm, batch_out_mean_grad_norm, batch_out_grad_norm_mean, batch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
-        batch_loss_sum_grad_norm, batch_loss_mean_grad_norm, batch_loss_grad_norm_mean, batch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
+        per_sapmle_fgrad_norm, batch_out_sum_grad_norm, batch_out_mean_grad_norm, batch_out_grad_norm_mean, batch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
+        per_sample_lossgrad_norm, batch_loss_sum_grad_norm, batch_loss_mean_grad_norm, batch_loss_grad_norm_mean, batch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
 
         wandb.log({
                 f"fgrad/{batch_type} batch out mean grad norm": batch_out_mean_grad_norm,
@@ -1130,7 +1161,7 @@ class SupTrainerWReplay(SupTrainer):
         self.model.train()
         endt = time.time()
         #logging.info(f"time elapsed for batch grad stats compute and logging: {endt - startt} seconds")
-        return
+        return per_sapmle_fgrad_norm, per_sapmle_fgrad_norm
 
     def _log_margin_stats(self, batch_model_output, target, batch_type="train"):
 
@@ -1175,7 +1206,7 @@ class SupTrainerWReplay(SupTrainer):
 
         endt = time.time()
         # logging.info(f"time elapsed for margin stats compute and logging: {endt - startt}")
-        return
+        return batch_out_margin
 
     def on_task_end(self):
         super(SupTrainerWReplay, self).on_task_end()
@@ -1284,7 +1315,13 @@ class SupTrainerWReplay(SupTrainer):
                 #    np.savetxt(save_path, self.replay_memory.forget_stats["first_learn_iters"], delimiter=', ', fmt='%1.0f')
 
         if self.use_replay:
-            self.replay_memory.on_batch_end(*batch, batch_results["corrects"], batch_results["softmax_preds"], self.global_iters)
+            self.replay_memory.on_batch_end(*batch,
+                                            batch_results["corrects"],
+                                            batch_results["softmax_preds"],
+                                            self.global_iters,
+                                            batch_results["margin"],
+                                            batch_results["fgrad_norm"],
+                                            batch_results["lossgrad_norm"],)
             if  False and self.memory_type == "fixedunforgettables":
                 logging.info("Logging forget stats happens here.")
                 count_first_learns = len(np.where(self.replay_memory.forget_stats["first_learn_iters"] == self.global_iters)[0])
