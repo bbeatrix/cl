@@ -1142,7 +1142,7 @@ class SupTrainerWReplay(SupTrainer):
             loss_per_sample = self.loss_function(predictions, targets)
             return loss_per_sample.mean()
 
-        per_sapmle_fgrad_norm, batch_out_sum_grad_norm, batch_out_mean_grad_norm, batch_out_grad_norm_mean, batch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
+        per_sample_fgrad_norm, batch_out_sum_grad_norm, batch_out_mean_grad_norm, batch_out_grad_norm_mean, batch_out_grad_norm_std = self._get_batch_grad_stats(input_images, target, model_output_func)
         per_sample_lossgrad_norm, batch_loss_sum_grad_norm, batch_loss_mean_grad_norm, batch_loss_grad_norm_mean, batch_loss_grad_norm_std = self._get_batch_grad_stats(input_images, target, loss_func)
 
         wandb.log({
@@ -1161,7 +1161,7 @@ class SupTrainerWReplay(SupTrainer):
         self.model.train()
         endt = time.time()
         #logging.info(f"time elapsed for batch grad stats compute and logging: {endt - startt} seconds")
-        return per_sapmle_fgrad_norm, per_sapmle_fgrad_norm
+        return per_sample_fgrad_norm, per_sample_lossgrad_norm
 
     def _log_margin_stats(self, batch_model_output, target, batch_type="train"):
 
@@ -1185,8 +1185,8 @@ class SupTrainerWReplay(SupTrainer):
         batch_out_margin_mean = torch.mean(batch_out_margin)
         batch_out_margin_std = torch.std(batch_out_margin)
 
-        batch_out_margin_abs_mean = torch.mean(batch_out_margin)
-        batch_out_margin_abs_std = torch.std(batch_out_margin)
+        batch_out_margin_abs_mean = torch.mean(batch_out_margin_abs)
+        batch_out_margin_abs_std = torch.std(batch_out_margin_abs)
 
         batch_normalized_margin_abs = batch_out_margin_abs / batch_correct_output_abs
 
